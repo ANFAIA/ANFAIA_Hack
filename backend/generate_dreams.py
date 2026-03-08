@@ -1,8 +1,13 @@
 import os
 import requests
 import urllib.parse
+from google import genai
+from google.genai import types
+from dotenv import load_dotenv
 import database
 
+load_dotenv()
+client = genai.Client()
 
 IMAGE_DIR = "../docs/image_examples"
 OUTPUT_DIR = "../frontend/public/dreams"
@@ -30,35 +35,57 @@ conn.close()
 
 print(f"Found {len(images)} images in {IMAGE_DIR}")
 
-mock_descriptions = {
-    "p1.JPG": "An empty wooden chair in a room.",
-    "p2.jpg": "A small white dog sitting down.",
-    "p3.JPG": "A sleek motorcycle parked outdoors.",
-    "p4.jpg": "A fluffy white cat resting indoors.",
-    "p5.JPG": "A steep paved road leading downwards."
-}
-
 for idx, img_name in enumerate(images):
     img_path = os.path.join(IMAGE_DIR, img_name)
     print(f"\nProcessing {img_name}...")
     
-    description = mock_descriptions.get(img_name, "A mysterious dream encountered by the bot.")
+    with open(img_path, "rb") as f:
+        image_bytes = f.read()
+
+    # Get Gemini Description
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[
+                "Describe the main subject of this physical environment or object in one short, clear sentence.",
+                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+            ]
+        )
+        description = response.text.strip()
+    except Exception as e:
+        print("Gemini description error:", e)
+        description = "A mysterious dream encountered by the bot."
         
     print(f"Vision Analysis: {description}")
     
-    # NanoBanana2 Mock via pollinations
-    prompt = f"abstract watercolor painting style, {description}"
-    pollinations_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=400&height=300&nologo=true"
-    
-    print(f"Synthesizing NanoBanana2 Dream from Gemini text...")
-    r = requests.get(pollinations_url)
-    
+    # NanoBanana2 (Imagen 3) Mock
+    print(f"Synthesizing NanoBanana2 Dream via Imagen 3...")
     out_name = f"dream_{idx}.jpg"
     out_path = os.path.join(OUTPUT_DIR, out_name)
-    with open(out_path, "wb") as f:
-        f.write(r.content)
-        
-    print(f"Saved dream to {out_path}")
+
+    try:
+        result = client.models.generate_images(
+            model='imagen-3.0-generate-001',
+            prompt=f"abstract watercolor painting style, {description}",
+            config=types.GenerateImagesConfig(
+                number_of_images=1,
+                output_mime_type="image/jpeg",
+                aspect_ratio="4:3"
+            )
+        )
+        for generated_image in result.generated_images:
+            with open(out_path, 'wb') as f:
+                f.write(generated_image.image.image_bytes)
+        print(f"Saved dream to {out_path}")
+    except Exception as e:
+        print("Gemini image generation error:", e)
+        # Fallback to pollinations if Gemini fails
+        prompt = f"abstract watercolor painting style, {description}"
+        pollinations_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=400&height=300&nologo=true"
+        r = requests.get(pollinations_url)
+        with open(out_path, "wb") as f:
+            f.write(r.content)
+        print(f"Saved fallback dream to {out_path}")
     
     public_url = f"/dreams/{out_name}"
     
