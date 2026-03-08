@@ -1,10 +1,19 @@
-from fastapi import FastAPI, WebSocket, HTTPException, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, HTTPException, WebSocketDisconnect, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from pydantic import BaseModel
 import asyncio
+import os
+import requests
+import urllib.parse
+from dotenv import load_dotenv
 from google import genai
+from google.genai import types
 import database
+
+load_dotenv()
+api_key = os.environ.get("GEMINI_API_KEY")
+client = genai.Client(api_key=api_key) if api_key else None
 
 app = FastAPI(title="OmniBot Nervous System")
 
@@ -23,6 +32,7 @@ class Discovery(BaseModel):
     embedding: list[float]
     lat: float = 0.0
     lng: float = 0.0
+    image_url: str = ""
 
 
 @app.get("/")
@@ -49,11 +59,78 @@ async def add_discovery(discovery: Discovery):
             type=discovery.type,
             embedding=discovery.embedding,
             lat=discovery.lat,
-            lng=discovery.lng
+            lng=discovery.lng,
+            image_url=discovery.image_url
         )
         return {"status": "ok", "id": discovery_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/bot/discover")
+async def bot_discover(file: UploadFile = File(...), lat: float = Form(0.0), lng: float = Form(0.0)):
+    """
+    Simulates the Bot uploading a frame from its camera. Uses Gemini to analyze 
+    the frame and immediately generates a NanoBanana2 Dream via Imagen 3.
+    """
+    image_bytes = await file.read()
+    
+    # 1. Analyze with Gemini
+    description = "A mysterious dream encountered by the bot."
+    if client:
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[
+                    "Describe the main subject of this physical environment or object in one short, clear sentence.",
+                    types.Part.from_bytes(data=image_bytes, mime_type=file.content_type or "image/jpeg")
+                ]
+            )
+            description = response.text.strip()
+        except Exception as e:
+            print("Gemini analysis error:", e)
+    
+    # 2. Generate NanoBanana2 Dream
+    output_dir = "../frontend/public/dreams"
+    os.makedirs(output_dir, exist_ok=True)
+    out_name = f"bot_dream_{database.get_connection().cursor().execute('SELECT COUNT(*) FROM discovery_metadata').fetchone()[0]}.jpg"
+    out_path = os.path.join(output_dir, out_name)
+    public_url = f"/dreams/{out_name}"
+    
+    try:
+        if client:
+            result = client.models.generate_images(
+                model='imagen-3.0-generate-001',
+                prompt=f"abstract watercolor painting style, {description}",
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                    output_mime_type="image/jpeg",
+                    aspect_ratio="4:3"
+                )
+            )
+            for generated_image in result.generated_images:
+                with open(out_path, 'wb') as f:
+                    f.write(generated_image.image.image_bytes)
+        else:
+            raise Exception("No Gemini client configured.")
+    except Exception as e:
+        print("Gemini imagen error, falling back to pollinations:", e)
+        prompt = f"abstract watercolor painting style, {description}"
+        pollinations_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=400&height=300&nologo=true"
+        r = requests.get(pollinations_url)
+        with open(out_path, "wb") as f:
+            f.write(r.content)
+            
+    # 3. Save to database
+    discovery_id = database.add_discovery(
+        description=description,
+        type="Environment",
+        lat=lat,
+        lng=lng,
+        embedding=[0.5] * 768,
+        image_url=public_url
+    )
+    
+    return {"status": "ok", "discovery_id": discovery_id, "image_url": public_url, "description": description}
 
 @app.get("/dreams/recap")
 async def get_dream_recap():
@@ -74,7 +151,8 @@ async def get_dream_recap():
                 "id": d["id"],
                 "prompt": prompt,
                 "lat": d["lat"],
-                "lng": d["lng"]
+                "lng": d["lng"],
+                "image_url": d["image_url"] if "image_url" in d.keys() else ""
             })
             
         return {
