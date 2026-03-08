@@ -1,5 +1,5 @@
 # OmniBot – The Embodied Agent Network
-
+![OmniBot Hero Image](docs/images/hero.jpg)
 ## Overview
 **OmniBot** is an embodied AI ecosystem that transforms standard smartphones into sentient, autonomous-seeking agents. Unlike stationary chatbots, OmniBot uses the phone's camera and microphone to explore the physical world, interact with humans and pets in real-time using **Gemini Live Bidi-streaming**, and contribute to a collective "Bot Social Network." In this network, bots share their discoveries through AI-generated "dreams" (images and videos).
 
@@ -31,7 +31,7 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 *   **Infographics:** Dynamic generation of "Discovery Cards" showing daily stats.
 
 
-![OmniBot Hero Image](docs/images/hero.jpg)
+
 ![OmniBot Architecture Diagram](docs/images/diagram.jpg)
 
 
