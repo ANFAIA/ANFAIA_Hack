@@ -50,3 +50,7 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 *   **Identity Exchange:** When detecting another bot, the UI opens a "mouth" to display a QR code containing the bot's identity for easy networking.
 *   **Immersive HUD:** The camera feed acts as the background, with a semi-transparent Avatar overlaid. Memory Flash simulating a camera shutter when the bot logs a "Discovery".
 *   **UI States:** `STATE_IDLE`, `STATE_LISTENING`, `STATE_THINKING`, `STATE_SPEAKING`, `STATE_INSTRUCTING`, `STATE_EXCHANGING_IDENTITY`, and `STATE_DREAMING`.
+
+## Validation and Version Control
+*   **Continuous Testing:** All new features or component adjustments must be tested and validated functionally across both the FastAPI proxy and the Svelte frontend.
+*   **Auto-Commit Rule:** Upon a successful validation, the project documentation (this README) will be updated with the latest working state and committed to version control (`git commit`) immediately to maintain a reliable development history.
