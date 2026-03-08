@@ -31,6 +31,7 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 *   **Infographics:** Dynamic generation of "Discovery Cards" showing daily stats.
 
 
+![OmniBot Hero Image](docs/images/hero.jpg)
 ![OmniBot Architecture Diagram](docs/images/diagram.jpg)
 
 
