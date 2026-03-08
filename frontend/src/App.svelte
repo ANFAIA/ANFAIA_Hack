@@ -19,9 +19,8 @@
   let instruction = "ALL CLEAR";
   let speechText = "";
 
-  // Speech Recognition Debug
+  // Speech Recognition Data
   let recognition: any;
-  let isListeningDebug = false;
   let transcript = "";
 
   // Audio Visualizer
@@ -360,11 +359,11 @@
           [Mode: {streamMode}]
         </div>
 
-        <!-- Debug Transcript HUD -->
-        {#if isListeningDebug}
-          <div class="debug-transcript">
-            <strong>HEARING:</strong>
-            {transcript || "listening..."}
+        <!-- Display what the bot hears continuously -->
+        {#if transcript}
+          <div class="hearing-captions">
+            <strong>USER:</strong>
+            {transcript}
           </div>
         {/if}
 
@@ -425,7 +424,12 @@
 
         <div class="controls">
           <button on:click={() => setState("STATE_IDLE")}>Idle</button>
-          <button on:click={() => setState("STATE_LISTENING")}>Listen</button>
+          <button
+            on:click={() => {
+              setState("STATE_LISTENING");
+              startContinuousHearing();
+            }}>Listen</button
+          >
           <button on:click={() => setState("STATE_THINKING")}>Think</button>
           <button on:click={() => setState("STATE_SPEAKING")}>Speak</button>
           <button on:click={() => setState("STATE_INSTRUCTING")}
