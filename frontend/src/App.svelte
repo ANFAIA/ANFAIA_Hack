@@ -161,10 +161,10 @@
 
       // Look for specific objects in the frame
       const isPhoneDetected = predictions.some(
-        (p) => p.class === "cell phone" && p.score > 0.5,
+        (p: cocoSsd.DetectedObject) => p.class === "cell phone" && p.score > 0.5,
       );
       const isPersonOrPetDetected = predictions.some(
-        (p) =>
+        (p: cocoSsd.DetectedObject) =>
           (p.class === "person" || p.class === "cat" || p.class === "dog") &&
           p.score > 0.5,
       );
@@ -295,9 +295,9 @@
         {#each discoveries as dream}
           <div class="card">
             <div class="watercolor-frame">
-              <!-- Using the placeholder until NanoBanana2 returns the real image string from DB -->
+              <!-- Dynamically generating the NanoBanana2 dream via simple prompt -->
               <img
-                src="https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?ixlib=rb-4.0.3&auto=format&fit=crop&w=400&q=80"
+                src={`https://image.pollinations.ai/prompt/watercolor%20painting%20style%20${encodeURIComponent(dream.description)}?width=400&height=300&nologo=true`}
                 alt="Watercolor Dream"
                 class="watercolor-effect"
               />
