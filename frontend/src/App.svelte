@@ -7,9 +7,6 @@
   type BotState = 'STATE_IDLE' | 'STATE_LISTENING' | 'STATE_THINKING' | 'STATE_SPEAKING' | 'STATE_INSTRUCTING' | 'STATE_EXCHANGING_IDENTITY';
   let currentState: BotState = 'STATE_IDLE';
 
-  // Bidi-streaming placeholder HUD text
-  let instruction = "ALL CLEAR";
-
   // Bot Identity Mock
   const botId = "OMNIBOT-A1";
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${botId}`;
@@ -41,11 +38,47 @@
   let streamMode = "NONE"; // PICTURES, VIDEO_AUDIO, AUDIO_QR
   let activeStream: MediaStream | null = null;
 
+  // Eye Animation State
+  let blink = false;
+  let eyeOffsetX = 0;
+  let eyeOffsetY = 0;
+
+  function startEyeBehaviors() {
+    // Random Blinking
+    setInterval(() => {
+      blink = true;
+      setTimeout(() => blink = false, 150);
+      
+      // Occasional double blink
+      if (Math.random() > 0.8) {
+        setTimeout(() => {
+          blink = true;
+          setTimeout(() => blink = false, 150);
+        }, 250);
+      }
+    }, 3000 + Math.random() * 4000);
+
+    // Random Looking Around
+    setInterval(() => {
+      // Only wander if idle or listening (otherwise rigid states might override)
+      if (currentState === 'STATE_IDLE' || currentState === 'STATE_LISTENING' || currentState === 'STATE_THINKING') {
+        const distance = currentState === 'STATE_THINKING' ? 30 : 15;
+        eyeOffsetX = (Math.random() * distance * 2) - distance;
+        eyeOffsetY = (Math.random() * distance * 2) - distance;
+      } else {
+        eyeOffsetX = 0;
+        eyeOffsetY = 0;
+      }
+    }, 1500 + Math.random() * 1000);
+  }
+
   onMount(async () => {
     if (isSocialPage) {
       fetchDreams();
       return;
     }
+    
+    startEyeBehaviors();
     
     try {
       activeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
@@ -56,7 +89,6 @@
     }
   });
 
-  $: if (videoElement && activeStream) { videoElement.srcObject = activeStream; videoElement.play(); }
   $: if (leftEyeVideo && activeStream) { leftEyeVideo.srcObject = activeStream; leftEyeVideo.play(); }
   $: if (rightEyeVideo && activeStream) { rightEyeVideo.srcObject = activeStream; rightEyeVideo.play(); }
 
@@ -89,7 +121,6 @@
 <main class="omni-app" class:dreaming={isSocialPage}>
   {#if !isSocialPage}
     <div class="camera-feed-bg">
-      <video bind:this={videoElement} class="real-camera" autoplay playsinline muted></video>
       <div class="hud-overlay">
         
         <!-- Status indicator for the requested Context-Aware Streaming -->
@@ -107,11 +138,16 @@
             </div>
           {:else}
             <div class="cute-eyes">
-              <div class="eye left-eye">
-                <video bind:this={leftEyeVideo} class="reflection-cam" autoplay playsinline muted></video>
+              <!-- Wrapping pupils in a white sclera for cuteness -->
+              <div class="sclera">
+                <div class="eye left-eye" style="transform: translate({eyeOffsetX}px, {eyeOffsetY}px) scaleY({blink ? 0.1 : 1});">
+                  <video bind:this={leftEyeVideo} class="reflection-cam" autoplay playsinline muted></video>
+                </div>
               </div>
-              <div class="eye right-eye">
-                <video bind:this={rightEyeVideo} class="reflection-cam" autoplay playsinline muted></video>
+              <div class="sclera">
+                <div class="eye right-eye" style="transform: translate({eyeOffsetX}px, {eyeOffsetY}px) scaleY({blink ? 0.1 : 1});">
+                  <video bind:this={rightEyeVideo} class="reflection-cam" autoplay playsinline muted></video>
+                </div>
               </div>
             </div>
           {/if}
@@ -176,7 +212,7 @@
 
   .omni-app {
     width: 100vw;
-    height: 100vh;
+    height: 100dvh;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -189,15 +225,6 @@
     width: 100%; height: 100%;
     background: radial-gradient(circle at center, #111, #000);
     z-index: 1;
-  }
-
-  .real-camera {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    object-fit: cover;
-    opacity: 0.5; /* maintain cyber-aesthetic overlay */
-    z-index: -1;
   }
 
   .streaming-status {
@@ -221,16 +248,9 @@
     height: 100%;
   }
 
-  .instruction-text {
-    font-size: 3rem;
-    color: #ffcc00; /* Yellow Warning/Caution */
-    text-shadow: 0 0 10px #ffcc00;
-    margin-bottom: 2rem;
-  }
-
   .bot-face {
-    width: 300px;
-    height: 150px;
+    width: 100%;
+    height: 100%;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -245,15 +265,26 @@
     width: 100%;
   }
 
+  .sclera {
+    width: 130px;
+    height: 160px;
+    background-color: #fff;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    box-shadow: inset 0 0 20px rgba(0,0,0,0.5), 0 0 20px #00ffcc;
+    overflow: hidden;
+  }
+
   .eye {
-    width: 70px;
-    height: 90px;
+    width: 90px;
+    height: 110px;
     background-color: #000;
-    border-radius: 50px;
+    border-radius: 50%;
     position: relative;
     overflow: hidden;
-    box-shadow: 0 0 15px #00ffcc;
-    transition: all 0.3s ease;
+    transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -263,16 +294,14 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    opacity: 0.5; /* Eye reflection opacity */
-    mix-blend-mode: screen;
+    opacity: 0.8; /* Eye reflection opacity */
   }
 
-  /* State Animations */
-  .state-STATE_IDLE .eye { animation: pulse 2s infinite ease-in-out; }
-  .state-STATE_LISTENING .eye { box-shadow: 0 0 30px #00ffcc, 0 0 60px #00ffcc; transform: scale(1.2); }
-  .state-STATE_THINKING .cute-eyes { animation: lookAround 2s infinite ease-in-out; }
-  .state-STATE_SPEAKING .eye { animation: speak 0.2s infinite alternate; }
-  .state-STATE_INSTRUCTING .eye { box-shadow: 0 0 20px #ffcc00; }
+  /* State Animations on the Sclera/Eyes container */
+  .state-STATE_IDLE .sclera { animation: pulse 3s infinite ease-in-out; }
+  .state-STATE_LISTENING .sclera { box-shadow: inset 0 0 10px rgba(0,0,0,0.5), 0 0 30px #00ffcc, 0 0 60px #00ffcc; }
+  .state-STATE_SPEAKING .sclera { animation: pulse 0.5s infinite alternate; }
+  .state-STATE_INSTRUCTING .sclera { box-shadow: inset 0 0 10px rgba(0,0,0,0.5), 0 0 20px #ffcc00; }
   .state-STATE_EXCHANGING_IDENTITY { animation: mouthOpen 0.5s forwards; }
 
   .bot-mouth-open {
