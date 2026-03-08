@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
+  import * as tf from "@tensorflow/tfjs";
+  import * as cocoSsd from "@tensorflow-models/coco-ssd";
 
   // Routing
   const isSocialPage = window.location.pathname === "/social";
@@ -111,6 +113,8 @@
     );
   }
 
+  let cocoModel: null | cocoSsd.ObjectDetection = null;
+
   onMount(async () => {
     if (isSocialPage) {
       fetchDreams();
@@ -120,6 +124,11 @@
     startEyeBehaviors();
 
     try {
+      // Load Tensorflow Model First
+      instruction = "INITIALIZING AI...";
+      cocoModel = await cocoSsd.load();
+      instruction = "ALL CLEAR";
+
       activeStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment" },
         audio: true,
@@ -139,38 +148,66 @@
     rightEyeVideo.srcObject = activeStream;
     rightEyeVideo.play();
   }
+  $: if (videoElement && activeStream) {
+    videoElement.srcObject = activeStream;
+    videoElement.play();
+  }
 
   function scanEnvironment() {
-    setInterval(() => {
-      // In a real app, this would use Gemini Vision / MLKit bounding boxes.
-      // Mocking the detection logic Based on the PRD rules:
-      const randomDetection = Math.random();
+    setInterval(async () => {
+      if (!cocoModel || !videoElement || videoElement.readyState !== 4) return;
 
-      if (randomDetection > 0.9) {
-        // Detect another robot / Phone
+      const predictions = await cocoModel.detect(videoElement);
+
+      // Look for specific objects in the frame
+      const isPhoneDetected = predictions.some(
+        (p) => p.class === "cell phone" && p.score > 0.5,
+      );
+      const isPersonOrPetDetected = predictions.some(
+        (p) =>
+          (p.class === "person" || p.class === "cat" || p.class === "dog") &&
+          p.score > 0.5,
+      );
+
+      // Rule: Show QR only if cell phone is seen
+      if (isPhoneDetected) {
         setState("STATE_EXCHANGING_IDENTITY");
         streamMode = "AUDIO_QR (Streaming only Audio + Captured QR)";
-      } else if (randomDetection > 0.7) {
-        // Detect human / pet
-        setState("STATE_LISTENING"); // or STATE_THINKING
+      }
+      // Rule: Stream video/audio for people or pets if no phone covers it up
+      else if (isPersonOrPetDetected) {
+        if (
+          currentState !== "STATE_SPEAKING" &&
+          currentState !== "STATE_INSTRUCTING"
+        ) {
+          setState("STATE_LISTENING");
+        }
         streamMode = "VIDEO_AUDIO (Streaming Small Video + Full Audio)";
-      } else {
-        // Default: Detect generic object
+      }
+      // Rule: Otherwise, generic object or empty scene
+      else {
         if (
           currentState !== "STATE_INSTRUCTING" &&
-          currentState !== "STATE_EXCHANGING_IDENTITY"
+          currentState !== "STATE_SPEAKING"
         ) {
           setState("STATE_IDLE");
         }
         streamMode = "PICTURES (Sending Pictures/Snapshots)";
       }
-    }, 4000); // Scan every 4 seconds
+    }, 2000); // Scan every 2 seconds matching PRD
   }
 </script>
 
 <main class="omni-app" class:dreaming={isSocialPage}>
   {#if !isSocialPage}
     <div class="camera-feed-bg">
+      <video
+        bind:this={videoElement}
+        class="hidden-vision-source"
+        autoplay
+        playsinline
+        muted
+      ></video>
       <div class="hud-overlay">
         <!-- Status indicator for the requested Context-Aware Streaming -->
         <div class="streaming-status">
@@ -325,6 +362,14 @@
     padding: 0.5rem;
     border: 1px solid #ff00ff;
     background: rgba(0, 0, 0, 0.5);
+  }
+
+  .hidden-vision-source {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+    width: 320px;
+    height: 240px;
   }
 
   .hud-overlay {
