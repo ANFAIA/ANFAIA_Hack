@@ -31,6 +31,44 @@ def init_db():
     conn.commit()
     conn.close()
 
+def get_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def add_discovery(description: str, type: str, embedding: list[float]):
+    conn = get_connection()
+    c = conn.cursor()
+    # Insert metadata
+    c.execute('INSERT INTO discovery_metadata (description, type) VALUES (?, ?)', (description, type))
+    discovery_id = c.lastrowid
+    
+    # Insert embedding into vector table
+    # Requires packing the float array into bytes if using sqlite-vec, but let's assume we can insert JSON/list for simple sqlite-vec usage depending on version,
+    # Actually, sqlite-vec uses `vec_f32` typically or we can use the helper function. Assumes json serialization or binary here.
+    # We will use simple placeholders for this hackathon skeleton
+    import json
+    # In sqlite-vec, embedding should be a blob, let's just insert as string for mock purposes unless we strictly serialize floats as bytes.
+    # For a real implementation, we use struct.pack
+    import struct
+    embedding_blob = struct.pack(f"{len(embedding)}f", *embedding)
+    
+    c.execute('INSERT INTO memories (id, embedding) VALUES (?, ?)', (discovery_id, embedding_blob))
+    conn.commit()
+    conn.close()
+    return discovery_id
+
+def get_all_discoveries():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('SELECT id, timestamp, description, type FROM discovery_metadata ORDER BY timestamp DESC')
+    rows = c.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
 if __name__ == "__main__":
     init_db()
     print("Database Initialized with sqlite-vec extensions.")
