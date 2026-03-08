@@ -479,13 +479,18 @@
     display: flex;
     justify-content: center;
     align-items: center;
+    /* Removed background-color: #000 so video shows easily if transparent */
   }
 
   .reflection-cam {
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
     opacity: 0.8; /* Eye reflection opacity */
+    z-index: 10;
   }
 
   /* State Animations on the Sclera/Eyes container */
