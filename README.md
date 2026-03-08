@@ -58,3 +58,40 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 ### Validation Log
 *   **[2026-03-08] Svelte UI States Test:** Successfully validated all Antigravity frontend states (Idle, Listen, Think, Speak, Instruct, Exchange ID, Dream) via the Chrome Agent. QR exchange and Watercolor Dream integrations passed without error.
 *   **[2026-03-08] FastAPI & SQLite-vec Test:** Successfully integrated `sqlite-vec` via `database.py`. Endpoints `/discoveries` (GET and POST) successfully created and validated through `curl`. Memories correctly format vectors and return metadata.
+
+## Installation & Running the Project
+
+### Prerequisites
+*   **Node.js** (v18+)
+*   **Python** (3.11+)
+
+### 1. Frontend (Svelte)
+```bash
+cd frontend
+npm install
+npm run dev
+```
+The UI will be accessible at `http://localhost:5173`.
+
+### 2. Backend (FastAPI & SQLite-vec)
+```bash
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python database.py  # Initializes the SQLite database
+uvicorn main:app --reload --port 8000
+```
+The API is available at `http://localhost:8000`.
+
+## Deployment via Google Cloud / Vertex AI
+OmniBot is designed to scale dynamically on GCP during the hackathon.
+
+1. **Backend on Cloud Run:**
+   - Containerize the FastAPI Python app and deploy via Google Cloud Run for auto-scaling HTTP and WebSocket support. Ensure a persistent volume or Cloud SQL with vector support is attached for memory storage.
+   
+2. **Vertex AI (Gemini 3.x Live API):**
+   - The Gemini 3.x Multimodal Live connections should route through Vertex AI. Export your `GOOGLE_API_KEY` for Vertex, and the FastAPI proxy will facilitate low-latency Bidi-streaming of instructions.
+
+3. **Frontend Hosting:**
+   - Build the Svelte PWA using `npm run build` within `frontend/`. Use Google Firebase Hosting or Cloud Storage to distribute the Web App to the client mobile devices.
