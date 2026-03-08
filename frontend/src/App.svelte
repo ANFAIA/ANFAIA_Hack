@@ -17,6 +17,7 @@
 
   // Bidi-streaming placeholder HUD text
   let instruction = "ALL CLEAR";
+  let speechText = "";
 
   // Bot Identity Mock
   const botId = "OMNIBOT-A1";
@@ -110,6 +111,46 @@
         }
       },
       5000 + Math.random() * 4000,
+    );
+
+    // Enhanced Spatial Awareness Behaviors
+    setInterval(
+      () => {
+        if (currentState === "STATE_IDLE") {
+          // Exploring the space
+          setState("STATE_INSTRUCTING");
+          const commands = [
+            "MOVE FORWARD ⬆️",
+            "TURN LEFT ⬅️",
+            "TURN RIGHT ➡️",
+            "SCAN AREA 🔍",
+            "REVERSE ⬇️",
+          ];
+          instruction = commands[Math.floor(Math.random() * commands.length)];
+          setTimeout(() => {
+            if (currentState === "STATE_INSTRUCTING") setState("STATE_IDLE");
+          }, 3000);
+        } else if (
+          currentState === "STATE_LISTENING" ||
+          currentState === "STATE_EXCHANGING_IDENTITY"
+        ) {
+          // Ask person or other bot for information
+          const previousState = currentState;
+          setState("STATE_SPEAKING");
+          const questions = [
+            "What is this place?",
+            "Can you show me around?",
+            "Tell me about this room.",
+            "Sharing spatial data...",
+            "Where am I?",
+          ];
+          speechText = questions[Math.floor(Math.random() * questions.length)];
+          setTimeout(() => {
+            if (currentState === "STATE_SPEAKING") setState(previousState);
+          }, 3000);
+        }
+      },
+      8000 + Math.random() * 6000,
     );
   }
 
@@ -215,6 +256,9 @@
         </div>
         {#if currentState === "STATE_INSTRUCTING"}
           <h1 class="instruction-text">{instruction}</h1>
+        {/if}
+        {#if currentState === "STATE_SPEAKING"}
+          <h1 class="speech-text">"{speechText}"</h1>
         {/if}
 
         <div class="bot-face state-{currentState} emotion-{emotion}">
