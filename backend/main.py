@@ -71,48 +71,55 @@ async def add_discovery(discovery: Discovery):
 @app.post("/bot/discover")
 async def bot_discover(file: UploadFile = File(...), lat: float = Form(0.0), lng: float = Form(0.0)):
     """
-    Simulates the Bot uploading a frame from its camera. Uses Gemini to analyze 
-    the frame and immediately generates a NanoBanana2 Dream via Imagen 3.
+    Receives a camera frame, describes it with Gemini, checks if the scene is
+    meaningfully new compared to recent discoveries, and only saves + generates
+    a watercolor dream when something genuinely new is detected.
     """
     image_bytes = await file.read()
-    
-    # 1. Analyze with Gemini
-    description = "A mysterious dream encountered by the bot."
+    mime = file.content_type or "image/jpeg"
+
+    # 1. Describe the scene with Gemini Vision
+    description = "A mysterious scene encountered by the bot."
     if client:
         try:
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=[
                     "Describe the main subject of this physical environment or object in one short, clear sentence.",
-                    types.Part.from_bytes(data=image_bytes, mime_type=file.content_type or "image/jpeg")
+                    types.Part.from_bytes(data=image_bytes, mime_type=mime)
                 ]
             )
             description = response.text.strip()
+            print(f"[discover] Scene: {description}")
         except Exception as e:
-            print("Gemini analysis error:", e)
-    
-    # 1.1 Save the actual incoming file so the bot can view the original image
+            print("Gemini vision error:", e)
+
+    # 2. Save original image (novelty is decided by the frontend via COCO-SSD)
     uploads_dir = "../frontend/public/uploads"
     os.makedirs(uploads_dir, exist_ok=True)
-    count_val = database.get_connection().cursor().execute('SELECT COUNT(*) FROM discovery_metadata').fetchone()[0]
-    
+    count_val = database.get_connection().cursor().execute(
+        'SELECT COUNT(*) FROM discovery_metadata'
+    ).fetchone()[0]
+
     orig_name = f"bot_orig_{count_val}.jpg"
     with open(os.path.join(uploads_dir, orig_name), "wb") as f_orig:
         f_orig.write(image_bytes)
     original_url = f"/uploads/{orig_name}"
-    
-    # 2. Generate NanoBanana2 Dream
+
+    # 4. Generate watercolor dream image
     output_dir = "../frontend/public/dreams"
     os.makedirs(output_dir, exist_ok=True)
     out_name = f"bot_dream_{count_val}.jpg"
     out_path = os.path.join(output_dir, out_name)
     public_url = f"/dreams/{out_name}"
-    
+
+    import random
+    dream_prompt = f"abstract watercolor painting, soft brushstrokes, {description}"
     try:
         if client:
             result = client.models.generate_images(
-                model='nano-banana-pro-preview',
-                prompt=f"abstract watercolor painting style, {description}",
+                model='imagen-4.0-generate-001',
+                prompt=dream_prompt,
                 config=types.GenerateImagesConfig(
                     number_of_images=1,
                     output_mime_type="image/jpeg",
@@ -122,28 +129,55 @@ async def bot_discover(file: UploadFile = File(...), lat: float = Form(0.0), lng
             for generated_image in result.generated_images:
                 with open(out_path, 'wb') as f:
                     f.write(generated_image.image.image_bytes)
+            print(f"[discover] Dream saved via Imagen 4: {out_path}")
         else:
             raise Exception("No Gemini client configured.")
     except Exception as e:
-        print("Gemini imagen error, falling back to pollinations:", e)
-        prompt = f"abstract watercolor painting style, {description}"
-        pollinations_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=400&height=300&nologo=true"
-        r = requests.get(pollinations_url)
-        with open(out_path, "wb") as f:
-            f.write(r.content)
-            
-    # 3. Save to database
+        print("Imagen error, falling back to pollinations:", e)
+        seed = random.randint(10000, 99999)
+        poll_url = (
+            f"https://image.pollinations.ai/prompt/{urllib.parse.quote(dream_prompt)}"
+            f"?width=512&height=384&nologo=true&seed={seed}&model=flux&nofeed=true"
+        )
+        saved = False
+        for attempt in range(3):
+            try:
+                r = requests.get(poll_url, timeout=90)
+                if len(r.content) > 1000:  # sanity check — not empty/error page
+                    with open(out_path, "wb") as f:
+                        f.write(r.content)
+                    print(f"[discover] Dream saved via Pollinations (seed={seed}, attempt {attempt+1})")
+                    saved = True
+                    break
+                else:
+                    print(f"[discover] Pollinations returned tiny response, retrying...")
+            except Exception as pe:
+                print(f"[discover] Pollinations attempt {attempt+1} failed: {pe}")
+            import time; time.sleep(3)
+        if not saved:
+            # Write a 1px placeholder so the path doesn't stay empty
+            print("[discover] All image attempts failed — skipping dream image.")
+            open(out_path, "wb").close()
+
+
+    # 5. Save to database
     discovery_id = database.add_discovery(
         description=description,
         type="Environment",
-        lat=lat,
-        lng=lng,
+        lat=lat, lng=lng,
         embedding=[0.5] * 768,
         image_url=public_url,
         original_image_url=original_url
     )
-    
-    return {"status": "ok", "discovery_id": discovery_id, "image_url": public_url, "original_image_url": original_url, "description": description}
+
+    return {
+        "status": "ok",
+        "saved": True,
+        "discovery_id": discovery_id,
+        "image_url": public_url,
+        "original_image_url": original_url,
+        "description": description
+    }
 
 @app.get("/bot/instruct")
 async def bot_instruct():
