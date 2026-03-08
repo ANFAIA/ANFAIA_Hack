@@ -180,40 +180,68 @@ async def get_dream_recap():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    
-    # Gemini 2.x Multimodal Live API Setup
-    client = genai.Client() # Expects GEMINI_API_KEY environment variable
-    model = "gemini-2.0-flash-exp"
-    
+    print("Frontend connected to /ws proxy")
+
+    # Use the correct Live API model (Vertex AI / AI Dev compatible)
+    LIVE_MODEL = "gemini-live-2.5-flash-native-audio"
+    LIVE_CONFIG = {
+        "response_modalities": ["AUDIO"],
+        "system_instruction": (
+            "You are OmniBot, a curious, friendly, sentient robot exploring the world. "
+            "Speak with warmth and wonder. You notice things around you and dream about them. "
+            "Keep responses short and conversational."
+        ),
+    }
+
+    if not client:
+        await websocket.send_json({"error": "GEMINI_API_KEY not configured on server."})
+        await websocket.close()
+        return
+
     try:
-        async with client.aio.live.connect(model=model, config={"response_modalities": ["AUDIO"]}) as session:
-            print("Connected to Gemini 2.x Live API")
-            
+        async with client.aio.live.connect(model=LIVE_MODEL, config=LIVE_CONFIG) as session:
+            print(f"Connected to Gemini Live API ({LIVE_MODEL})")
+
             async def receive_from_app():
+                """Forward raw PCM audio bytes from browser → Gemini Live."""
                 try:
                     while True:
-                        # Receive video/audio chunks from Svelte App
                         data = await websocket.receive_bytes()
-                        # Send to Gemini
-                        await session.send(input={"data": data, "mime_type": "audio/pcm"}, end_of_turn=True)
+                        import base64
+                        await session.send_realtime_input(
+                            audio={
+                                "data": base64.b64encode(data).decode(),
+                                "mime_type": "audio/pcm;rate=16000"
+                            }
+                        )
                 except WebSocketDisconnect:
-                    print("App disconnected")
+                    print("Frontend disconnected from /ws")
 
             async def send_to_app():
+                """Forward Gemini Live audio responses → browser."""
+                import base64
                 async for response in session.receive():
-                    server_content = response.server_content
-                    if server_content is not None:
-                        model_turn = server_content.model_turn
-                        if model_turn is not None:
-                            for part in model_turn.parts:
-                                if part.inline_data:
-                                    # Forward Gemini's audio back to the Svelte App
-                                    await websocket.send_bytes(part.inline_data.data)
+                    sc = response.server_content
+                    if sc and sc.model_turn:
+                        for part in sc.model_turn.parts:
+                            if part.inline_data and isinstance(part.inline_data.data, bytes):
+                                # Send as base64 JSON so browser can decode safely
+                                await websocket.send_json({
+                                    "type": "audio",
+                                    "data": base64.b64encode(part.inline_data.data).decode()
+                                })
+                    # Notify browser of turn completion
+                    if sc and sc.turn_complete:
+                        await websocket.send_json({"type": "turn_complete"})
 
             await asyncio.gather(receive_from_app(), send_to_app())
-            
+
     except Exception as e:
         print(f"Gemini Live Proxy Error: {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
