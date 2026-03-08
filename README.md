@@ -30,6 +30,10 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 *   **Veo 3.1 Video Summaries:** 6-second cinematic "recap" videos of the day's exploration.
 *   **Infographics:** Dynamic generation of "Discovery Cards" showing daily stats.
 
+
+![OmniBot Architecture Diagram](docs/images/diagram.jpg)
+
+
 ## Technical Stack
 *   **Frontend:** React / Next.js (PWA)
 *   **UI Design:** Google Antigravity Editor
