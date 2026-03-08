@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import * as tf from "@tensorflow/tfjs";
-  import * as cocoSsd from "@tensorflow-models/coco-ssd";
+  import { GeminiLiveAPI, MultimodalLiveResponseType } from "./geminilive.js";
+  import { AudioStreamer, AudioPlayer } from "./mediaUtils.js";
 
   // Routing
   const isSocialPage = window.location.pathname === "/social";
@@ -19,8 +19,11 @@
   let instruction = "ALL CLEAR";
   let speechText = "";
 
-  // Speech Recognition Data
-  let recognition: any;
+  // Vertex AI Live API Data
+  const PROJECT_ID = "anfaia";
+  let geminiClient: any;
+  let audioStreamer: any;
+  let audioPlayer: any;
   let transcript = "";
 
   // Audio Visualizer
@@ -212,48 +215,48 @@
     );
   }
 
-  function startContinuousHearing() {
-    if (
-      !("webkitSpeechRecognition" in window) &&
-      !("SpeechRecognition" in window)
-    ) {
-      console.warn("Speech Recognition API not supported in this browser.");
-      return;
-    }
+  function initGemini() {
+    geminiClient = new GeminiLiveAPI(
+      "ws://localhost:8000/ws",
+      PROJECT_ID,
+      "gemini-2.0-flash-exp",
+    );
+    geminiClient.setSystemInstructions("You are OmniBot, a cute AI companion.");
+    geminiClient.setInputAudioTranscription(true);
+    geminiClient.setOutputAudioTranscription(true);
 
-    const SpeechRecognition =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
-    recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
+    audioStreamer = new AudioStreamer(geminiClient);
+    audioPlayer = new AudioPlayer();
 
-    recognition.onresult = (event: any) => {
-      let interimTranscript = "";
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          transcript = event.results[i][0].transcript;
-        } else {
-          interimTranscript = event.results[i][0].transcript;
-        }
-      }
-      if (interimTranscript) {
-        transcript = interimTranscript;
+    geminiClient.onReceiveResponse = (message: any) => {
+      if (message.type === MultimodalLiveResponseType.INPUT_TRANSCRIPTION) {
+        transcript = message.data.text;
+      } else if (
+        message.type === MultimodalLiveResponseType.OUTPUT_TRANSCRIPTION
+      ) {
+        speechText = message.data.text;
+        setState("STATE_SPEAKING");
+      } else if (message.type === MultimodalLiveResponseType.AUDIO) {
+        audioPlayer.play(message.data);
       }
     };
 
-    recognition.onend = () => {
-      try {
-        recognition.start();
-      } catch (e) {}
-    };
-
-    try {
-      recognition.start();
-    } catch (e) {}
+    geminiClient.connect();
   }
 
-  let cocoModel: null | cocoSsd.ObjectDetection = null;
+  async function startContinuousHearing() {
+    initGemini();
+    geminiClient.onConnectionStarted = async () => {
+      try {
+        await audioStreamer.start();
+        console.log("Audio streaming to Gemini started");
+      } catch (e) {
+        console.error("Failed to start audio streamer", e);
+      }
+    };
+  }
+
+  let ml5Classifier: any = null;
 
   onMount(async () => {
     if (isSocialPage) {
@@ -264,19 +267,41 @@
     startEyeBehaviors();
 
     try {
-      // Load Tensorflow Model First
       instruction = "INITIALIZING AI...";
-      cocoModel = await cocoSsd.load();
-      instruction = "ALL CLEAR";
 
-      activeStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-        audio: true,
-      });
-      // Start continuous scanning loop
-      scanEnvironment();
+      try {
+        activeStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+          audio: true,
+        });
+      } catch (camErr) {
+        console.warn("Environment camera not found, trying default.", camErr);
+        try {
+          activeStream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true,
+          });
+        } catch (vidErr) {
+          console.warn(
+            "No video camera found at all, trying audio ONLY.",
+            vidErr,
+          );
+          activeStream = await navigator.mediaDevices.getUserMedia({
+            video: false,
+            audio: true,
+          });
+        }
+      }
+
       // Start listening to users
       startContinuousHearing();
+
+      const ml5 = (window as any).ml5;
+      ml5Classifier = ml5.imageClassifier("MobileNet", videoElement, () => {
+        instruction = "ALL CLEAR";
+        // Start continuous scanning loop
+        scanEnvironment();
+      });
     } catch (err) {
       console.error("Camera access denied or unavailable", err);
     }
@@ -300,46 +325,75 @@
 
   function scanEnvironment() {
     setInterval(async () => {
-      if (!cocoModel || !videoElement || videoElement.readyState !== 4) return;
+      if (!ml5Classifier || !videoElement || videoElement.readyState !== 4)
+        return;
 
-      const predictions = await cocoModel.detect(videoElement);
+      ml5Classifier.classify(videoElement, (err: any, results: any[]) => {
+        if (err || !results || results.length === 0) return;
 
-      // Look for specific objects in the frame
-      const isPhoneDetected = predictions.some(
-        (p) => p.class === "cell phone" && p.score > 0.5,
-      );
-      const isPersonOrPetDetected = predictions.some(
-        (p) =>
-          (p.class === "person" || p.class === "cat" || p.class === "dog") &&
-          p.score > 0.5,
-      );
+        const topResult = results[0];
 
-      // Rule: Show QR only if cell phone is seen
-      if (isPhoneDetected) {
-        setState("STATE_EXCHANGING_IDENTITY");
-        streamMode = "AUDIO_QR (Streaming only Audio + Captured QR)";
-      }
-      // Rule: Stream video/audio for people or pets if no phone covers it up
-      else if (isPersonOrPetDetected) {
-        if (
-          currentState !== "STATE_SPEAKING" &&
-          currentState !== "STATE_INSTRUCTING"
-        ) {
-          setState("STATE_LISTENING");
+        // Threshold for MobileNet
+        if (topResult.confidence > 0.4) {
+          const label = topResult.label;
+
+          // Capture picture for the backend dream API
+          const tempCanvas = document.createElement("canvas");
+          tempCanvas.width = videoElement.videoWidth;
+          tempCanvas.height = videoElement.videoHeight;
+          const ctx = tempCanvas.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(
+              videoElement,
+              0,
+              0,
+              tempCanvas.width,
+              tempCanvas.height,
+            );
+            const base64Image = tempCanvas.toDataURL("image/jpeg");
+
+            // POST to dream backend to be stored and processed
+            fetch("http://localhost:8000/discoveries", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                description: label,
+                type: "ml5-capture",
+                embedding: new Array(768).fill(0.0), // Match backend requirements
+                lat: 0.0,
+                lng: 0.0,
+                image_data: base64Image,
+              }),
+            }).catch((e) => console.error("Discovery error:", e));
+          }
+
+          // MobileNet specific label matching for bot behaviors
+          if (
+            label.toLowerCase().includes("phone") ||
+            label.toLowerCase().includes("ipod")
+          ) {
+            setState("STATE_EXCHANGING_IDENTITY");
+            streamMode = "AUDIO_QR (Streaming only Audio + Captured QR)";
+          } else {
+            if (
+              currentState !== "STATE_SPEAKING" &&
+              currentState !== "STATE_INSTRUCTING"
+            ) {
+              setState("STATE_LISTENING");
+            }
+            streamMode = "VIDEO_AUDIO (Streaming Small Video + Full Audio)";
+          }
+        } else {
+          if (
+            currentState !== "STATE_INSTRUCTING" &&
+            currentState !== "STATE_SPEAKING"
+          ) {
+            setState("STATE_IDLE");
+          }
+          streamMode = "PICTURES (Sending Pictures/Snapshots)";
         }
-        streamMode = "VIDEO_AUDIO (Streaming Small Video + Full Audio)";
-      }
-      // Rule: Otherwise, generic object or empty scene
-      else {
-        if (
-          currentState !== "STATE_INSTRUCTING" &&
-          currentState !== "STATE_SPEAKING"
-        ) {
-          setState("STATE_IDLE");
-        }
-        streamMode = "PICTURES (Sending Pictures/Snapshots)";
-      }
-    }, 2000); // Scan every 2 seconds matching PRD
+      });
+    }, 4000); // Scan every 4 seconds to limit API load
   }
 </script>
 

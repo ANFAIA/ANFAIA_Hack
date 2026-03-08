@@ -4,3 +4,5 @@ websockets>=12.0
 sqlite-vec>=0.1.1
 python-multipart>=0.0.9
 google-genai>=0.2.0
+google-auth>=2.29.0
+certifi>=2024.2.2
