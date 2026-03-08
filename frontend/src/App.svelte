@@ -16,13 +16,61 @@
   function setState(state: BotState) {
     currentState = state;
   }
+
+  // Camera & Streaming Logic
+  let videoElement: HTMLVideoElement;
+  let streamMode = "NONE"; // PICTURES, VIDEO_AUDIO, AUDIO_QR
+
+  onMount(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
+      if (videoElement) {
+        videoElement.srcObject = stream;
+        videoElement.play();
+      }
+      // Start continuous scanning loop
+      scanEnvironment();
+    } catch (err) {
+      console.error("Camera access denied or unavailable", err);
+    }
+  });
+
+  function scanEnvironment() {
+    setInterval(() => {
+      // In a real app, this would use Gemini Vision / MLKit bounding boxes.
+      // Mocking the detection logic Based on the PRD rules:
+      const randomDetection = Math.random();
+      
+      if (randomDetection > 0.9) {
+        // Detect another robot / Phone
+        setState('STATE_EXCHANGING_IDENTITY');
+        streamMode = 'AUDIO_QR (Streaming only Audio + Captured QR)';
+      } else if (randomDetection > 0.7) {
+        // Detect human / pet
+        setState('STATE_LISTENING'); // or STATE_THINKING
+        streamMode = 'VIDEO_AUDIO (Streaming Small Video + Full Audio)';
+      } else {
+        // Default: Detect generic object
+        if (currentState !== 'STATE_INSTRUCTING' && currentState !== 'STATE_EXCHANGING_IDENTITY') {
+             setState('STATE_IDLE');
+        }
+        streamMode = 'PICTURES (Sending Pictures/Snapshots)';
+      }
+      
+    }, 4000); // Scan every 4 seconds
+  }
 </script>
 
 <main class="omni-app" class:dreaming={currentState === 'STATE_DREAMING'}>
   {#if currentState !== 'STATE_DREAMING'}
     <div class="camera-feed-bg">
-      <!-- Future: Actual Camera Feed Stream mapped here -->
+      <video bind:this={videoElement} class="real-camera" autoplay playsinline muted></video>
       <div class="hud-overlay">
+        
+        <!-- Status indicator for the requested Context-Aware Streaming -->
+        <div class="streaming-status">
+          [Mode: {streamMode}]
+        </div>
         {#if currentState === 'STATE_INSTRUCTING'}
           <h1 class="instruction-text">{instruction}</h1>
         {/if}
@@ -91,8 +139,27 @@
     top: 0; left: 0;
     width: 100%; height: 100%;
     background: radial-gradient(circle at center, #111, #000);
-    opacity: 0.9; 
     z-index: 1;
+  }
+
+  .real-camera {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: 0.5; /* maintain cyber-aesthetic overlay */
+    z-index: -1;
+  }
+
+  .streaming-status {
+    position: absolute;
+    top: 2rem;
+    left: 2rem;
+    font-size: 0.8rem;
+    color: #ff00ff;
+    padding: 0.5rem;
+    border: 1px solid #ff00ff;
+    background: rgba(0,0,0,0.5);
   }
 
   .hud-overlay {

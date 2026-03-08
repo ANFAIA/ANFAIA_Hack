@@ -40,7 +40,10 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 *   **Hosting:** Google Cloud Run / Vertex AI
 
 ## Key Requirements
-*   **Real-Time Interaction:** Latency <500ms voice-to-voice, instant audio stop on user speech (Interruption), and camera identification of Humans, Pets, and Specific Items.
+*   **Real-Time Interaction:** Latency <500ms voice-to-voice, instant audio stop on user speech (Interruption). The Bot must remain continuously active and adapt its streaming mode based on context:
+    *   **Generic Objects:** Take/Send Pictures (Snapshots).
+    *   **Humans / Pets:** Stream Small Videos + Full Audio.
+    *   **Other Robots (Phones):** Stream Audio Only + Capture Identity QR.
 *   **Navigation:** Gemini spatial analysis every 2 seconds for updating the navigation commands, prioritizing "Approach and Greet" for humans.
 *   **Memory:** Every unique interaction is logged. Every 10 Discovery Events trigger a "Dream Cycle" (Image/Video generation).
 
@@ -59,6 +62,7 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 *   **[2026-03-08] Svelte UI States Test:** Successfully validated all Antigravity frontend states (Idle, Listen, Think, Speak, Instruct, Exchange ID, Dream) via the Chrome Agent. QR exchange and Watercolor Dream integrations passed without error.
 *   **[2026-03-08] FastAPI & SQLite-vec Test:** Successfully integrated `sqlite-vec` via `database.py`. Endpoints `/discoveries` (GET and POST) successfully created and validated through `curl`. Memories correctly format vectors and return metadata.
 *   **[2026-03-08] Pytest Suite Completed:** Created `test_main.py` utilizing `pytest` and `TestClient` to ensure continuous 100% test coverage for the root status, WebSocket streaming endpoints, and vector embedding schema/length checks (768 dimensions). All tests pass.
+*   **[2026-03-08] Context-Aware Camera Pipeline:** Implemented the environment-facing `<video>` capture in `App.svelte` and correctly coded the stream multiplexing rules (Audio + QR for robots, Small Videos for Humans, Snapshots for Objects). Validated in the Svelte live environment.
 
 ## Installation & Running the Project
 
