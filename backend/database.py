@@ -24,7 +24,9 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         description TEXT,
-        type TEXT
+        type TEXT,
+        lat REAL DEFAULT 0.0,
+        lng REAL DEFAULT 0.0
     )
     ''')
     
@@ -39,11 +41,11 @@ def get_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-def add_discovery(description: str, type: str, embedding: list[float]):
+def add_discovery(description: str, type: str, embedding: list[float], lat: float = 0.0, lng: float = 0.0):
     conn = get_connection()
     c = conn.cursor()
     # Insert metadata
-    c.execute('INSERT INTO discovery_metadata (description, type) VALUES (?, ?)', (description, type))
+    c.execute('INSERT INTO discovery_metadata (description, type, lat, lng) VALUES (?, ?, ?, ?)', (description, type, lat, lng))
     discovery_id = c.lastrowid
     
     # Insert embedding into vector table
@@ -64,7 +66,7 @@ def add_discovery(description: str, type: str, embedding: list[float]):
 def get_all_discoveries():
     conn = get_connection()
     c = conn.cursor()
-    c.execute('SELECT id, timestamp, description, type FROM discovery_metadata ORDER BY timestamp DESC')
+    c.execute('SELECT id, timestamp, description, type, lat, lng FROM discovery_metadata ORDER BY timestamp DESC')
     rows = c.fetchall()
     conn.close()
     return [dict(row) for row in rows]

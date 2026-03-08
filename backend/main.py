@@ -19,6 +19,8 @@ class Discovery(BaseModel):
     description: str
     type: str
     embedding: list[float]
+    lat: float = 0.0
+    lng: float = 0.0
 
 
 @app.get("/")
@@ -43,7 +45,9 @@ async def add_discovery(discovery: Discovery):
         discovery_id = database.add_discovery(
             description=discovery.description,
             type=discovery.type,
-            embedding=discovery.embedding
+            embedding=discovery.embedding,
+            lat=discovery.lat,
+            lng=discovery.lng
         )
         return {"status": "ok", "id": discovery_id}
     except Exception as e:
