@@ -27,6 +27,7 @@ images = [f for f in os.listdir(IMAGE_DIR) if f.lower().endswith(('.png', '.jpg'
 images.sort()
 
 # Clear database tables to avoid duplicates for now
+database.init_db()
 conn = database.get_connection()
 c = conn.cursor()
 c.execute("DELETE FROM discovery_metadata")

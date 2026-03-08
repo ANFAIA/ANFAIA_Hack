@@ -295,12 +295,21 @@
         {#each discoveries as dream}
           <div class="card">
             <div class="watercolor-frame">
-              <!-- Dynamically generating the NanoBanana2 dream, or use loaded local seed image -->
-              <img
-                src={dream.image_url ? dream.image_url : `https://image.pollinations.ai/prompt/watercolor%20painting%20style%20${encodeURIComponent(dream.description)}?width=400&height=300&nologo=true`}
-                alt="Watercolor Dream"
-                class="watercolor-effect"
-              />
+              {#if dream.original_image_url}
+                <div class="image-half">
+                  <img src={dream.original_image_url} alt="Original Capture" class="original-effect" />
+                  <p class="image-label">Camera Reality</p>
+                </div>
+              {/if}
+              <div class="image-half" class:full-width={!dream.original_image_url}>
+                <!-- Dynamically generating the NanoBanana2 dream, or use loaded local seed image -->
+                <img
+                  src={dream.image_url ? dream.image_url : `https://image.pollinations.ai/prompt/watercolor%20painting%20style%20${encodeURIComponent(dream.description)}?width=400&height=300&nologo=true`}
+                  alt="Watercolor Dream"
+                  class="watercolor-effect"
+                />
+                <p class="image-label">Bot's Dream</p>
+              </div>
             </div>
             <p><strong>{dream.timestamp}</strong> - {dream.type}</p>
             <p>{dream.description}</p>
@@ -707,11 +716,39 @@
     background: #fff; /* Paper-like background for watercolor */
     padding: 0.5rem;
     box-sizing: border-box;
+    display: flex;
+    gap: 10px;
+  }
+
+  .image-half {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .image-half.full-width {
+    width: 100%;
+  }
+
+  .original-effect {
+    width: 100%;
+    border-radius: 2px;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .image-label {
+    font-size: 0.7rem;
+    color: #666;
+    margin-top: 5px;
+    text-align: center;
   }
 
   .watercolor-effect {
     width: 100%;
-    height: auto;
+    height: 100%;
+    object-fit: cover;
     border-radius: 2px;
     /* Simulate a low-detailed watercolor look via CSS filters */
     filter: saturate(1.5) contrast(1.1) brightness(1.1) blur(0.5px) sepia(0.2);
