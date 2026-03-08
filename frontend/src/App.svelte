@@ -19,21 +19,24 @@
 
   // Camera & Streaming Logic
   let videoElement: HTMLVideoElement;
+  let leftEyeVideo: HTMLVideoElement;
+  let rightEyeVideo: HTMLVideoElement;
   let streamMode = "NONE"; // PICTURES, VIDEO_AUDIO, AUDIO_QR
+  let activeStream: MediaStream | null = null;
 
   onMount(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
-      if (videoElement) {
-        videoElement.srcObject = stream;
-        videoElement.play();
-      }
+      activeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
       // Start continuous scanning loop
       scanEnvironment();
     } catch (err) {
       console.error("Camera access denied or unavailable", err);
     }
   });
+
+  $: if (videoElement && activeStream) { videoElement.srcObject = activeStream; videoElement.play(); }
+  $: if (leftEyeVideo && activeStream) { leftEyeVideo.srcObject = activeStream; leftEyeVideo.play(); }
+  $: if (rightEyeVideo && activeStream) { rightEyeVideo.srcObject = activeStream; rightEyeVideo.play(); }
 
   function scanEnvironment() {
     setInterval(() => {
@@ -81,7 +84,18 @@
               <img src={qrCodeUrl} alt="Identity QR Code" class="qr-code" />
             </div>
           {:else}
-            <div class="core-eye" />
+            <div class="cute-eyes">
+              <div class="eye left-eye">
+                <div class="eye-reflection">
+                   <video bind:this={leftEyeVideo} class="reflection-cam" autoplay playsinline muted></video>
+                </div>
+              </div>
+              <div class="eye right-eye">
+                <div class="eye-reflection">
+                   <video bind:this={rightEyeVideo} class="reflection-cam" autoplay playsinline muted></video>
+                </div>
+              </div>
+            </div>
           {/if}
         </div>
         
@@ -180,30 +194,57 @@
   }
 
   .bot-face {
-    width: 150px;
+    width: 300px;
     height: 150px;
-    border-radius: 50%;
     display: flex;
     justify-content: center;
     align-items: center;
     transition: all 0.3s ease;
   }
 
-  .core-eye {
-    width: 60px;
-    height: 60px;
-    border-radius: 50%;
-    background: #00ffcc;
-    box-shadow: 0 0 20px #00ffcc;
+  .cute-eyes {
+    display: flex;
+    gap: 40px;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+  }
+
+  .eye {
+    width: 70px;
+    height: 90px;
+    background-color: #000;
+    border-radius: 50px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 0 15px #00ffcc;
     transition: all 0.3s ease;
   }
 
+  .eye-reflection {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    width: 25px;
+    height: 25px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: #fff;
+  }
+
+  .reflection-cam {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.9;
+  }
+
   /* State Animations */
-  .state-STATE_IDLE .core-eye { animation: pulse 2s infinite ease-in-out; }
-  .state-STATE_LISTENING .core-eye { box-shadow: 0 0 50px #00ffcc, 0 0 100px #00ffcc; transform: scale(1.2); }
-  .state-STATE_THINKING .core-eye { animation: rotate 0.5s infinite linear; border-top: 5px solid #fff; }
-  .state-STATE_SPEAKING .core-eye { animation: speak 0.2s infinite alternate; }
-  .state-STATE_INSTRUCTING .core-eye { background: #ffcc00; box-shadow: 0 0 20px #ffcc00; }
+  .state-STATE_IDLE .eye { animation: pulse 2s infinite ease-in-out; }
+  .state-STATE_LISTENING .eye { box-shadow: 0 0 30px #00ffcc, 0 0 60px #00ffcc; transform: scale(1.2); }
+  .state-STATE_THINKING .cute-eyes { animation: lookAround 2s infinite ease-in-out; }
+  .state-STATE_SPEAKING .eye { animation: speak 0.2s infinite alternate; }
+  .state-STATE_INSTRUCTING .eye { box-shadow: 0 0 20px #ffcc00; }
   .state-STATE_EXCHANGING_IDENTITY { animation: mouthOpen 0.5s forwards; }
 
   .bot-mouth-open {
@@ -228,8 +269,10 @@
     50% { transform: scale(1.1); opacity: 1; }
     100% { transform: scale(1); opacity: 0.8; }
   }
-  @keyframes rotate {
-    100% { transform: rotate(360deg); }
+  @keyframes lookAround {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-20px); }
+    75% { transform: translateX(20px); }
   }
   @keyframes speak {
     0% { transform: scaleY(0.8); }

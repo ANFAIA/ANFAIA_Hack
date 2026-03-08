@@ -51,7 +51,7 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 *   **Cyber-Sentient Theme:** Black backgrounds, Neon Green/Cyan accents, Minimalist typography.
 *   **No Text Input:** Interaction is 100% Voice and Vision.
 *   **Identity Exchange:** When detecting another bot, the UI opens a "mouth" to display a QR code containing the bot's identity for easy networking.
-*   **Immersive HUD:** The camera feed acts as the background, with a semi-transparent Avatar overlaid. Memory Flash simulating a camera shutter when the bot logs a "Discovery".
+*   **Immersive HUD:** The camera feed acts as the background, with the Bot represented by "Two Cute Black Eyes". The active camera stream is directly visible mimicking "reflections" within the bot's eyes. Memory Flash simulating a camera shutter when the bot logs a "Discovery".
 *   **UI States:** `STATE_IDLE`, `STATE_LISTENING`, `STATE_THINKING`, `STATE_SPEAKING`, `STATE_INSTRUCTING`, `STATE_EXCHANGING_IDENTITY`, and `STATE_DREAMING`.
 
 ## Validation and Version Control
@@ -63,6 +63,7 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 *   **[2026-03-08] FastAPI & SQLite-vec Test:** Successfully integrated `sqlite-vec` via `database.py`. Endpoints `/discoveries` (GET and POST) successfully created and validated through `curl`. Memories correctly format vectors and return metadata.
 *   **[2026-03-08] Pytest Suite Completed:** Created `test_main.py` utilizing `pytest` and `TestClient` to ensure continuous 100% test coverage for the root status, WebSocket streaming endpoints, and vector embedding schema/length checks (768 dimensions). All tests pass.
 *   **[2026-03-08] Context-Aware Camera Pipeline:** Implemented the environment-facing `<video>` capture in `App.svelte` and correctly coded the stream multiplexing rules (Audio + QR for robots, Small Videos for Humans, Snapshots for Objects). Validated in the Svelte live environment.
+*   **[2026-03-08] UX "Cute Eyes" Update:** Refactored the generic 'core-eye' into duplicate glowing black ovals. Real-time media streams were reliably bridged into duplicate reflection glints mimicking dynamic environment reflection.
 
 ## Installation & Running the Project
 
