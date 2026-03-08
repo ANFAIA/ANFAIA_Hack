@@ -30,9 +30,12 @@
   // Social Network Data (Dreams)
   let discoveries: any[] = [];
 
+  // API base URL — set VITE_BACKEND_URL env var at build time for production
+  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+
   async function fetchDreams() {
     try {
-      const resp = await fetch("http://localhost:8000/discoveries");
+      const resp = await fetch(`${BACKEND_URL}/discoveries`);
       if (resp.ok) {
         const payload = await resp.json();
         discoveries = payload.data;
