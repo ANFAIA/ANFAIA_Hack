@@ -6,8 +6,12 @@ from google.genai import types
 from dotenv import load_dotenv
 import database
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 api_key = os.environ.get("GEMINI_API_KEY")
+if not api_key:
+    print("WARNING: GEMINI_API_KEY not found in .env file!")
+else:
+    print(f"Using API Key starting with: {api_key[:8]}...")
 client = genai.Client(api_key=api_key)
 
 IMAGE_DIR = "../frontend/public/image_examples"
@@ -67,7 +71,7 @@ for idx, img_name in enumerate(images):
 
     try:
         result = client.models.generate_images(
-            model='imagen-3.0-generate-001',
+            model='imagen-4.0-generate-001',
             prompt=f"abstract watercolor painting style, {description}",
             config=types.GenerateImagesConfig(
                 number_of_images=1,
