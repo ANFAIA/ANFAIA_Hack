@@ -57,3 +57,4 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 
 ### Validation Log
 *   **[2026-03-08] Svelte UI States Test:** Successfully validated all Antigravity frontend states (Idle, Listen, Think, Speak, Instruct, Exchange ID, Dream) via the Chrome Agent. QR exchange and Watercolor Dream integrations passed without error.
+*   **[2026-03-08] FastAPI & SQLite-vec Test:** Successfully integrated `sqlite-vec` via `database.py`. Endpoints `/discoveries` (GET and POST) successfully created and validated through `curl`. Memories correctly format vectors and return metadata.
