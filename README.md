@@ -58,6 +58,7 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 ### Validation Log
 *   **[2026-03-08] Svelte UI States Test:** Successfully validated all Antigravity frontend states (Idle, Listen, Think, Speak, Instruct, Exchange ID, Dream) via the Chrome Agent. QR exchange and Watercolor Dream integrations passed without error.
 *   **[2026-03-08] FastAPI & SQLite-vec Test:** Successfully integrated `sqlite-vec` via `database.py`. Endpoints `/discoveries` (GET and POST) successfully created and validated through `curl`. Memories correctly format vectors and return metadata.
+*   **[2026-03-08] Pytest Suite Completed:** Created `test_main.py` utilizing `pytest` and `TestClient` to ensure continuous 100% test coverage for the root status, WebSocket streaming endpoints, and vector embedding schema/length checks (768 dimensions). All tests pass.
 
 ## Installation & Running the Project
 
@@ -92,6 +93,14 @@ python database.py  # Initializes the SQLite database
 uvicorn main:app --reload --port 8000
 ```
 The API is available at `http://localhost:8000`.
+
+### 3. Running Unit Tests
+A `pytest` suite guarantees the structural integrity of the proxy APIs and memory inserts:
+```bash
+cd backend
+uv pip install pytest httpx pytest-asyncio
+pytest test_main.py
+```
 
 ## Deployment via Google Cloud / Vertex AI
 OmniBot is designed to scale dynamically on GCP during the hackathon.
