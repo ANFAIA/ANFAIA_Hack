@@ -11,7 +11,7 @@ from google import genai
 from google.genai import types
 import database
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 api_key = os.environ.get("GEMINI_API_KEY")
 client = genai.Client(api_key=api_key) if api_key else None
 
@@ -111,7 +111,7 @@ async def bot_discover(file: UploadFile = File(...), lat: float = Form(0.0), lng
     try:
         if client:
             result = client.models.generate_images(
-                model='imagen-3.0-generate-001',
+                model='nano-banana-pro-preview',
                 prompt=f"abstract watercolor painting style, {description}",
                 config=types.GenerateImagesConfig(
                     number_of_images=1,
