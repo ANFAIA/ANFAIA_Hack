@@ -64,8 +64,17 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 ### Prerequisites
 *   **Node.js** (v18+)
 *   **Python** (3.11+)
+*   **uv** (The blazing fast Python package installer. Install via: `curl -LsSf https://astral.sh/uv/install.sh | sh`)
 
-### 1. Frontend (Svelte)
+### 1. Easy Setup (Recommended)
+We provide an interactive bash script utilizing `uv` to instantly set up virtual environments, install all dependencies, and launch both the frontend and backend servers together:
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+### 2. Manual Setup
+#### Frontend (Svelte)
 ```bash
 cd frontend
 npm install
@@ -73,12 +82,12 @@ npm run dev
 ```
 The UI will be accessible at `http://localhost:5173`.
 
-### 2. Backend (FastAPI & SQLite-vec)
+#### Backend (FastAPI & SQLite-vec via uv)
 ```bash
 cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
 python database.py  # Initializes the SQLite database
 uvicorn main:app --reload --port 8000
 ```
