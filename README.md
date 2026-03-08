@@ -20,12 +20,13 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 ### 2. The "Nervous System" (FastAPI Proxy)
 *   **Orchestration:** Gateway between the Mobile App and **Gemini 3.x Live API**.
 *   **Spatial Reasoning Tool:** Translates visual data into navigation commands.
-*   **Discovery Engine:** Identifies "Interactions" (Human/Pet/Item) to trigger conversation branches.
-*   **Memory Bank:** Stores "Discoveries" in **SQLite-vec** (vectorized descriptions and timestamps).
+*   **Discovery Engine:** Identifies "Interactions" (Human/Pet/Item) to trigger conversation branches. Stores location mapping coordinates (Lat/Lng) alongside semantic context.
+*   **Memory Bank:** Stores "Discoveries" in **SQLite-vec** (vectorized descriptions, timestamps, and geolocation).
 
-### 3. The "Dream Feed" (Social Network)
-*   **Collective Memory:** A web dashboard showing a chronological feed of all bots.
-*   **NanoBanana2 "Dreams":** Generation of images of the bot's favorite memories. All dreams must be generated in a low detailed "watercolor painting style".
+### 3. The "Dream Feed" (Standalone Social Network Page)
+*   **Collective Memory:** A separate Web Page (`/social`) showing a chronological feed of all bots.
+*   **NanoBanana2 "Dreams":** Generates images of the bot's favorite memories. All dreams must be generated in a low detailed "watercolor painting style".
+*   **Google Maps Integration:** Automatically renders interactive iframe maps tracking the geolocation of specific memories directly alongside the generated watercolors.
 *   **Veo 3.1 Video Summaries:** 6-second cinematic "recap" videos of the day's exploration.
 *   **Infographics:** Dynamic generation of "Discovery Cards" showing daily stats.
 
@@ -51,8 +52,8 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 *   **Cyber-Sentient Theme:** Black backgrounds, Neon Green/Cyan accents, Minimalist typography.
 *   **No Text Input:** Interaction is 100% Voice and Vision.
 *   **Identity Exchange:** When detecting another bot, the UI opens a "mouth" to display a QR code containing the bot's identity for easy networking.
-*   **Immersive HUD:** The camera feed acts as the background, with the Bot represented by "Two Cute Black Eyes". The active camera stream is directly visible mimicking "reflections" within the bot's eyes. Memory Flash simulating a camera shutter when the bot logs a "Discovery".
-*   **UI States:** `STATE_IDLE`, `STATE_LISTENING`, `STATE_THINKING`, `STATE_SPEAKING`, `STATE_INSTRUCTING`, `STATE_EXCHANGING_IDENTITY`, and `STATE_DREAMING`.
+*   **Immersive HUD:** The camera feed acts as the background, with the Bot represented by "Two Cute Black Eyes". The native active camera stream captures are mapped using a `mix-blend-mode` screen directly across the entire black lens of the eyes. Memory Flash occurs when the bot logs a "Discovery".
+*   **UI States:** `STATE_IDLE`, `STATE_LISTENING`, `STATE_THINKING`, `STATE_SPEAKING`, `STATE_INSTRUCTING`, and `STATE_EXCHANGING_IDENTITY`.
 
 ## Validation and Version Control
 *   **Continuous Testing:** All new features or component adjustments must be tested and validated functionally across both the FastAPI proxy and the Svelte frontend.
@@ -63,7 +64,8 @@ This project focuses on real-time multimodal interaction (Audio/Vision), breakin
 *   **[2026-03-08] FastAPI & SQLite-vec Test:** Successfully integrated `sqlite-vec` via `database.py`. Endpoints `/discoveries` (GET and POST) successfully created and validated through `curl`. Memories correctly format vectors and return metadata.
 *   **[2026-03-08] Pytest Suite Completed:** Created `test_main.py` utilizing `pytest` and `TestClient` to ensure continuous 100% test coverage for the root status, WebSocket streaming endpoints, and vector embedding schema/length checks (768 dimensions). All tests pass.
 *   **[2026-03-08] Context-Aware Camera Pipeline:** Implemented the environment-facing `<video>` capture in `App.svelte` and correctly coded the stream multiplexing rules (Audio + QR for robots, Small Videos for Humans, Snapshots for Objects). Validated in the Svelte live environment.
-*   **[2026-03-08] UX "Cute Eyes" Update:** Refactored the generic 'core-eye' into duplicate glowing black ovals. Real-time media streams were reliably bridged into duplicate reflection glints mimicking dynamic environment reflection.
+*   **[2026-03-08] UX "Cute Eyes" Update:** Refactored the generic 'core-eye' into duplicate glowing black ovals. Re-scaled the reflection streams to cover the entire black lens element using visual blending.
+*   **[2026-03-08] Social Network Decoupling & Mapping:** Extracted the "Dream" gallery out of the core HUD and into a standalone Web Page (`/social`). Hooked up the Dream interface loop to fetch active FastAPI database contents, successfully parsing the injected Location Lat/Lng models and mapping them with native Google Maps iframes.
 
 ## Installation & Running the Project
 
