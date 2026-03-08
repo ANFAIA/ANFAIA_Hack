@@ -117,6 +117,7 @@
   }
 
   let cocoModel: null | cocoSsd.ObjectDetection = null;
+  let started = false; // guards media init behind a user tap (required on mobile)
 
   onMount(async () => {
     if (isSocialPage) {
@@ -126,35 +127,58 @@
 
     startEyeBehaviors();
 
-    try {
-      // Load Tensorflow Model First
-      instruction = "INITIALIZING AI...";
-      cocoModel = await cocoSsd.load();
-      instruction = "ALL CLEAR";
+    // Pre-load the heavy TF model while waiting for the user tap so startup
+    // feels instant once they interact.
+    instruction = "INITIALIZING AI...";
+    cocoSsd.load().then((model) => {
+      cocoModel = model;
+      instruction = started ? "ALL CLEAR" : "TAP TO START";
+    });
+  });
 
+  // Called from the tap-to-start overlay — runs inside a user gesture so
+  // getUserMedia + video.play() are always permitted on iOS/Android.
+  async function startCamera() {
+    started = true;
+    if (cocoModel) instruction = "ALL CLEAR";
+
+    try {
       activeStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
+        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: true,
       });
-      // Start continuous scanning loop
+
+      // Assign srcObject and play all videos inside the gesture callback
+      await Promise.all([
+        assignAndPlay(videoElement, activeStream),
+        assignAndPlay(leftEyeVideo, activeStream),
+        assignAndPlay(rightEyeVideo, activeStream),
+      ]);
+
       scanEnvironment();
     } catch (err) {
       console.error("Camera access denied or unavailable", err);
+      instruction = "CAMERA UNAVAILABLE";
     }
-  });
+  }
 
-  $: if (leftEyeVideo && activeStream) {
-    leftEyeVideo.srcObject = activeStream;
-    leftEyeVideo.play();
+  async function assignAndPlay(el: HTMLVideoElement | undefined, stream: MediaStream) {
+    if (!el) return;
+    el.srcObject = stream;
+    el.muted = true;          // required for autoplay policy
+    el.playsInline = true;    // required on iOS
+    try {
+      await el.play();
+    } catch (e) {
+      console.warn("video.play() failed:", e);
+    }
   }
-  $: if (rightEyeVideo && activeStream) {
-    rightEyeVideo.srcObject = activeStream;
-    rightEyeVideo.play();
-  }
-  $: if (videoElement && activeStream) {
-    videoElement.srcObject = activeStream;
-    videoElement.play();
-  }
+
+  // Keep reactive assignments for when video elements mount *after* the stream
+  // is already available (Svelte may bind them after startCamera resolves).
+  $: if (leftEyeVideo && activeStream) assignAndPlay(leftEyeVideo, activeStream);
+  $: if (rightEyeVideo && activeStream) assignAndPlay(rightEyeVideo, activeStream);
+  $: if (videoElement && activeStream) assignAndPlay(videoElement, activeStream);
 
   function scanEnvironment() {
     setInterval(async () => {
@@ -199,10 +223,184 @@
       }
     }, 2000); // Scan every 2 seconds matching PRD
   }
+
+  // ─── Gemini Live API (WebSocket) ────────────────────────────────────────────
+  // Build WS URL: use Vite proxy (/ws) in dev, full URL in production
+  const WS_URL = import.meta.env.VITE_BACKEND_URL
+    ? `${import.meta.env.VITE_BACKEND_URL.replace(/^http/, "ws")}/ws`
+    : `ws://${window.location.hostname}:8000/ws`;
+
+  // Gemini outputs PCM at 24 kHz; we send PCM at 16 kHz
+  const GEMINI_OUTPUT_SAMPLE_RATE = 24000;
+  const GEMINI_INPUT_SAMPLE_RATE = 16000;
+
+  let liveWs: WebSocket | null = null;
+  let audioCtx: AudioContext | null = null;
+  let scriptProcessor: ScriptProcessorNode | null = null;
+  let isStreaming = false;
+  let liveError = "";
+
+  // Playback queue so audio chunks play sequentially
+  let audioQueue: AudioBuffer[] = [];
+  let isPlayingAudio = false;
+  let nextPlayTime = 0;
+
+  function downsampleTo16k(input: Float32Array, fromRate: number): Float32Array {
+    if (fromRate === GEMINI_INPUT_SAMPLE_RATE) return input;
+    const ratio = fromRate / GEMINI_INPUT_SAMPLE_RATE;
+    const out = new Float32Array(Math.floor(input.length / ratio));
+    for (let i = 0; i < out.length; i++) {
+      out[i] = input[Math.floor(i * ratio)];
+    }
+    return out;
+  }
+
+  async function startLiveSession() {
+    if (liveWs) return;
+    liveError = "";
+    setState("STATE_THINKING");
+
+    liveWs = new WebSocket(WS_URL);
+    liveWs.binaryType = "arraybuffer";
+
+    liveWs.onopen = async () => {
+      console.log("[OmniBot] Connected to Gemini Live via /ws proxy");
+      setState("STATE_LISTENING");
+      await startAudioCapture();
+      isStreaming = true;
+    };
+
+    liveWs.onmessage = async (event: MessageEvent) => {
+      try {
+        const msg = JSON.parse(event.data as string);
+        if (msg.type === "audio") {
+          setState("STATE_SPEAKING");
+          enqueueAudio(msg.data as string);
+        } else if (msg.type === "turn_complete") {
+          if (audioQueue.length === 0 && !isPlayingAudio) {
+            setState("STATE_LISTENING");
+          }
+        } else if (msg.type === "error") {
+          liveError = msg.message ?? "Unknown error";
+          console.error("[OmniBot] Gemini error:", liveError);
+          stopLiveSession();
+        }
+      } catch {
+        // Non-JSON message — ignore
+      }
+    };
+
+    liveWs.onclose = () => {
+      console.log("[OmniBot] WebSocket closed");
+      cleanupAudio();
+      isStreaming = false;
+      setState("STATE_IDLE");
+    };
+
+    liveWs.onerror = (err) => {
+      console.error("[OmniBot] WebSocket error:", err);
+      liveError = "Connection failed. Is the backend running?";
+      stopLiveSession();
+    };
+  }
+
+  async function startAudioCapture() {
+    // Use existing activeStream if available (already has mic permission),
+    // otherwise request audio-only stream.
+    const micStream =
+      activeStream ??
+      (await navigator.mediaDevices.getUserMedia({ audio: true }));
+
+    // Create AudioContext at browser native rate; we'll downsample manually.
+    audioCtx = new AudioContext();
+    const source = audioCtx.createMediaStreamSource(micStream);
+
+    // ScriptProcessor is deprecated but universally supported; buffer size 4096.
+    scriptProcessor = audioCtx.createScriptProcessor(4096, 1, 1);
+    source.connect(scriptProcessor);
+    // Connect to destination to keep the graph alive (audio is muted via gain=0).
+    const silentGain = audioCtx.createGain();
+    silentGain.gain.value = 0;
+    scriptProcessor.connect(silentGain);
+    silentGain.connect(audioCtx.destination);
+
+    scriptProcessor.onaudioprocess = (e: AudioProcessingEvent) => {
+      if (!liveWs || liveWs.readyState !== WebSocket.OPEN) return;
+      const raw = e.inputBuffer.getChannelData(0);
+      const pcm32 = downsampleTo16k(raw, audioCtx!.sampleRate);
+      const pcm16 = new Int16Array(pcm32.length);
+      for (let i = 0; i < pcm32.length; i++) {
+        pcm16[i] = Math.max(-32768, Math.min(32767, Math.round(pcm32[i] * 32767)));
+      }
+      liveWs.send(pcm16.buffer);
+    };
+  }
+
+  function enqueueAudio(base64Data: string) {
+    if (!audioCtx) return;
+
+    // Decode base64 → raw bytes → Int16 PCM (Gemini output: 24 kHz, mono)
+    const binary = atob(base64Data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+    const pcm16 = new Int16Array(bytes.buffer);
+    // Create an AudioBuffer tagged at 24 kHz; AudioContext resamples automatically.
+    const buf = audioCtx.createBuffer(1, pcm16.length, GEMINI_OUTPUT_SAMPLE_RATE);
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < pcm16.length; i++) ch[i] = pcm16[i] / 32768;
+
+    audioQueue.push(buf);
+    if (!isPlayingAudio) schedulePlayback();
+  }
+
+  function schedulePlayback() {
+    if (!audioCtx || audioQueue.length === 0) {
+      isPlayingAudio = false;
+      // All queued audio played — go back to listening
+      if (isStreaming) setState("STATE_LISTENING");
+      return;
+    }
+
+    isPlayingAudio = true;
+    const buf = audioQueue.shift()!;
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+
+    const startAt = Math.max(audioCtx.currentTime, nextPlayTime);
+    src.start(startAt);
+    nextPlayTime = startAt + buf.duration;
+    src.onended = () => schedulePlayback();
+  }
+
+  function cleanupAudio() {
+    scriptProcessor?.disconnect();
+    scriptProcessor = null;
+    audioCtx?.close();
+    audioCtx = null;
+    audioQueue = [];
+    isPlayingAudio = false;
+    nextPlayTime = 0;
+  }
+
+  function stopLiveSession() {
+    liveWs?.close();
+    liveWs = null;
+    cleanupAudio();
+    isStreaming = false;
+    setState("STATE_IDLE");
+  }
 </script>
 
 <main class="omni-app" class:dreaming={isSocialPage}>
   {#if !isSocialPage}
+    {#if !started}
+      <button class="tap-overlay" on:click={startCamera} aria-label="Start OmniBot">
+        <span class="tap-ring"></span>
+        <span class="tap-label">TAP TO ACTIVATE</span>
+      </button>
+    {/if}
     <div class="camera-feed-bg">
       <video
         bind:this={videoElement}
@@ -269,6 +467,16 @@
         </div>
 
         <div class="controls">
+          <button
+            class="talk-btn"
+            class:active={isStreaming}
+            on:click={() => (isStreaming ? stopLiveSession() : startLiveSession())}
+          >
+            {isStreaming ? "DISCONNECT" : "TALK TO OMNIBOT"}
+          </button>
+          {#if liveError}
+            <span class="live-error">{liveError}</span>
+          {/if}
           <button on:click={() => setState("STATE_IDLE")}>Idle</button>
           <button on:click={() => setState("STATE_LISTENING")}>Listen</button>
           <button on:click={() => setState("STATE_THINKING")}>Think</button>
@@ -286,10 +494,8 @@
   {:else}
     <div class="dream-feed">
       <h1>OmniBot Social Network</h1>
-      <p>
-        NanoBanana2 (Watercolor Painting Style) Generated Images feed goes
-        here...
-      </p>
+
+
 
       <div class="gallery">
         {#if discoveries.length === 0}
@@ -337,6 +543,42 @@
 </main>
 
 <style>
+  .tap-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(0, 0, 0, 0.92);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 2rem;
+    border: none;
+    cursor: pointer;
+    touch-action: manipulation; /* prevent double-tap zoom on mobile */
+  }
+
+  .tap-ring {
+    display: block;
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    border: 3px solid #00ffcc;
+    animation: tapPulse 1.5s infinite ease-in-out;
+  }
+
+  .tap-label {
+    font-family: "Space Mono", monospace;
+    color: #00ffcc;
+    font-size: 1.1rem;
+    letter-spacing: 0.15em;
+  }
+
+  @keyframes tapPulse {
+    0%, 100% { transform: scale(1); opacity: 0.6; box-shadow: 0 0 10px #00ffcc; }
+    50% { transform: scale(1.15); opacity: 1; box-shadow: 0 0 40px #00ffcc; }
+  }
+
   :global(body) {
     margin: 0;
     padding: 0;
@@ -660,6 +902,38 @@
     gap: 0.5rem;
     flex-wrap: wrap;
     justify-content: center;
+    align-items: center;
+  }
+
+  .talk-btn {
+    background: transparent;
+    border: 2px solid #00ffcc;
+    color: #00ffcc;
+    padding: 0.5rem 1.5rem;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: bold;
+    letter-spacing: 0.1em;
+    animation: pulseBtn 2s infinite ease-in-out;
+  }
+
+  .talk-btn.active {
+    background: #00ffcc;
+    color: #000;
+    animation: none;
+  }
+
+  @keyframes pulseBtn {
+    0%, 100% { box-shadow: 0 0 6px #00ffcc; }
+    50% { box-shadow: 0 0 20px #00ffcc; }
+  }
+
+  .live-error {
+    color: #ff4444;
+    font-size: 0.7rem;
+    border: 1px solid #ff4444;
+    padding: 0.3rem 0.6rem;
+    background: rgba(255, 68, 68, 0.1);
   }
 
   button {

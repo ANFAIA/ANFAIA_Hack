@@ -7,6 +7,13 @@ export default defineConfig({
   server: {
     host: true,   // expose to LAN (binds to 0.0.0.0)
     port: 5173,
+    proxy: {
+      '/ws': {
+        target: 'ws://localhost:8000',
+        ws: true,
+        changeOrigin: true,
+      },
+    },
   }
 })
 

@@ -182,8 +182,8 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     print("Frontend connected to /ws proxy")
 
-    # Use the correct Live API model (Vertex AI / AI Dev compatible)
-    LIVE_MODEL = "gemini-live-2.5-flash-native-audio"
+    # Live API model for bidiGenerateContent (native audio, v1beta)
+    LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
     LIVE_CONFIG = {
         "response_modalities": ["AUDIO"],
         "system_instruction": (
