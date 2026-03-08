@@ -145,6 +145,29 @@ async def bot_discover(file: UploadFile = File(...), lat: float = Form(0.0), lng
     
     return {"status": "ok", "discovery_id": discovery_id, "image_url": public_url, "original_image_url": original_url, "description": description}
 
+@app.get("/bot/instruct")
+async def bot_instruct():
+    """
+    Called by the bot when it sees nothing interesting.
+    Returns a short exploration instruction from the Gemini brain.
+    """
+    if not client:
+        return {"instruction": "EXPLORE FORWARD"}
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=(
+                "You are the brain of OmniBot, a curious robot exploring the world. "
+                "Its camera sees nothing interesting right now. "
+                "Reply with ONE short movement instruction, max 4 words, ALL CAPS. "
+                "Examples: TURN LEFT, MOVE FORWARD, SCAN AREA, LOOK UP, ROTATE SLOWLY."
+            )
+        )
+        return {"instruction": response.text.strip().upper()[:40]}
+    except Exception as e:
+        print("Brain instruct error:", e)
+        return {"instruction": "SCANNING..."}
+
 @app.get("/dreams/recap")
 async def get_dream_recap():
     """
@@ -202,12 +225,19 @@ async def websocket_endpoint(websocket: WebSocket):
         async with client.aio.live.connect(model=LIVE_MODEL, config=LIVE_CONFIG) as session:
             print(f"Connected to Gemini Live API ({LIVE_MODEL})")
 
+            import base64
+
+            # Trigger the bot to greet the user immediately on connection
+            await session.send_client_content(
+                turns=[{"role": "user", "parts": [{"text": "Hello! Please introduce yourself in one short sentence."}]}],
+                turn_complete=True
+            )
+
             async def receive_from_app():
                 """Forward raw PCM audio bytes from browser → Gemini Live."""
                 try:
                     while True:
                         data = await websocket.receive_bytes()
-                        import base64
                         await session.send_realtime_input(
                             audio={
                                 "data": base64.b64encode(data).decode(),
@@ -219,18 +249,18 @@ async def websocket_endpoint(websocket: WebSocket):
 
             async def send_to_app():
                 """Forward Gemini Live audio responses → browser."""
-                import base64
                 async for response in session.receive():
                     sc = response.server_content
                     if sc and sc.model_turn:
                         for part in sc.model_turn.parts:
-                            if part.inline_data and isinstance(part.inline_data.data, bytes):
-                                # Send as base64 JSON so browser can decode safely
-                                await websocket.send_json({
-                                    "type": "audio",
-                                    "data": base64.b64encode(part.inline_data.data).decode()
-                                })
-                    # Notify browser of turn completion
+                            if part.inline_data:
+                                raw = part.inline_data.data
+                                # SDK may return bytes or base64 string depending on version
+                                if isinstance(raw, bytes):
+                                    audio_b64 = base64.b64encode(raw).decode()
+                                else:
+                                    audio_b64 = raw  # already base64 string
+                                await websocket.send_json({"type": "audio", "data": audio_b64})
                     if sc and sc.turn_complete:
                         await websocket.send_json({"type": "turn_complete"})
 

@@ -174,19 +174,86 @@
     }
   }
 
-  // Keep reactive assignments for when video elements mount *after* the stream
-  // is already available (Svelte may bind them after startCamera resolves).
-  $: if (leftEyeVideo && activeStream) assignAndPlay(leftEyeVideo, activeStream);
-  $: if (rightEyeVideo && activeStream) assignAndPlay(rightEyeVideo, activeStream);
-  $: if (videoElement && activeStream) assignAndPlay(videoElement, activeStream);
+  // Reactive assignments: only assign if the element doesn't already have this
+  // stream (avoids AbortError from interrupting an in-progress load).
+  $: if (leftEyeVideo && activeStream && leftEyeVideo.srcObject !== activeStream)
+    assignAndPlay(leftEyeVideo, activeStream);
+  $: if (rightEyeVideo && activeStream && rightEyeVideo.srcObject !== activeStream)
+    assignAndPlay(rightEyeVideo, activeStream);
+  $: if (videoElement && activeStream && videoElement.srcObject !== activeStream)
+    assignAndPlay(videoElement, activeStream);
 
+  // ─── Snapshot capture ────────────────────────────────────────────────────────
+  let _scanCanvas: HTMLCanvasElement | null = null;
+
+  function captureFrame(): Blob | null {
+    if (!videoElement || videoElement.readyState < 2) return null;
+    if (!_scanCanvas) _scanCanvas = document.createElement("canvas");
+    _scanCanvas.width = videoElement.videoWidth || 320;
+    _scanCanvas.height = videoElement.videoHeight || 240;
+    const ctx = _scanCanvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(videoElement, 0, 0, _scanCanvas.width, _scanCanvas.height);
+    const dataUrl = _scanCanvas.toDataURL("image/jpeg", 0.8);
+    const [header, b64] = dataUrl.split(",");
+    const mime = header.match(/:(.*?);/)![1];
+    const binary = atob(b64);
+    const arr = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  }
+
+  // ─── Cooldowns ───────────────────────────────────────────────────────────────
+  let lastDiscoverMs = 0;
+  const DISCOVER_COOLDOWN = 30_000; // max one dream per 30 s
+  let lastInstructMs = 0;
+  const INSTRUCT_COOLDOWN = 10_000; // max one instruction per 10 s
+
+  async function sendToDreamNetwork() {
+    const now = Date.now();
+    if (now - lastDiscoverMs < DISCOVER_COOLDOWN) return;
+    lastDiscoverMs = now;
+
+    const blob = captureFrame();
+    if (!blob) return;
+
+    setState("STATE_THINKING");
+    streamMode = "DREAMING OBJECT...";
+
+    const form = new FormData();
+    form.append("file", blob, "frame.jpg");
+    form.append("lat", "0");
+    form.append("lng", "0");
+    try {
+      await fetch(`${BACKEND_URL}/bot/discover`, { method: "POST", body: form });
+    } catch (e) {
+      console.error("[OmniBot] Dream network error:", e);
+    }
+  }
+
+  async function fetchBrainInstruction() {
+    const now = Date.now();
+    if (now - lastInstructMs < INSTRUCT_COOLDOWN) return;
+    lastInstructMs = now;
+
+    try {
+      const resp = await fetch(`${BACKEND_URL}/bot/instruct`);
+      if (resp.ok) {
+        const data = await resp.json();
+        instruction = data.instruction ?? "SCANNING...";
+      }
+    } catch (e) {
+      console.error("[OmniBot] Brain instruction error:", e);
+    }
+  }
+
+  // ─── Autonomous environment scan loop ────────────────────────────────────────
   function scanEnvironment() {
     setInterval(async () => {
       if (!cocoModel || !videoElement || videoElement.readyState !== 4) return;
 
       const predictions = await cocoModel.detect(videoElement);
 
-      // Look for specific objects in the frame
       const isPhoneDetected = predictions.some(
         (p: cocoSsd.DetectedObject) => p.class === "cell phone" && p.score > 0.5,
       );
@@ -195,40 +262,45 @@
           (p.class === "person" || p.class === "cat" || p.class === "dog") &&
           p.score > 0.5,
       );
+      const hasAnyObject = predictions.some(
+        (p: cocoSsd.DetectedObject) => p.score > 0.5,
+      );
 
-      // Rule: Show QR only if cell phone is seen
       if (isPhoneDetected) {
+        // ① Another phone → open mouth, show QR, pause live chat
+        if (isStreaming) stopLiveSession();
         setState("STATE_EXCHANGING_IDENTITY");
-        streamMode = "AUDIO_QR (Streaming only Audio + Captured QR)";
+        streamMode = "QR IDENTITY EXCHANGE";
+
+      } else if (isPersonOrPetDetected) {
+        // ② Person or pet → auto-start live audio conversation
+        streamMode = "LIVE AUDIO CHAT";
+        if (!isStreaming) startLiveSession();
+        // state (LISTENING / SPEAKING) managed by live session events
+
+      } else if (hasAnyObject) {
+        // ③ Object but no person/pet/phone → snapshot → dream social network
+        if (isStreaming) stopLiveSession();
+        sendToDreamNetwork();
+
+      } else {
+        // ④ Nothing detected → ask brain for exploration instruction
+        if (isStreaming) stopLiveSession();
+        setState("STATE_INSTRUCTING");
+        streamMode = "EXPLORING...";
+        fetchBrainInstruction();
       }
-      // Rule: Stream video/audio for people or pets if no phone covers it up
-      else if (isPersonOrPetDetected) {
-        if (
-          currentState !== "STATE_SPEAKING" &&
-          currentState !== "STATE_INSTRUCTING"
-        ) {
-          setState("STATE_LISTENING");
-        }
-        streamMode = "VIDEO_AUDIO (Streaming Small Video + Full Audio)";
-      }
-      // Rule: Otherwise, generic object or empty scene
-      else {
-        if (
-          currentState !== "STATE_INSTRUCTING" &&
-          currentState !== "STATE_SPEAKING"
-        ) {
-          setState("STATE_IDLE");
-        }
-        streamMode = "PICTURES (Sending Pictures/Snapshots)";
-      }
-    }, 2000); // Scan every 2 seconds matching PRD
+    }, 2000); // scan every 2 s
   }
 
   // ─── Gemini Live API (WebSocket) ────────────────────────────────────────────
   // Build WS URL: use Vite proxy (/ws) in dev, full URL in production
+  // In dev, use window.location.host (includes :5173) so the request goes
+  // through the Vite proxy → ws://localhost:8000/ws on the backend.
+  // In production, derive from VITE_BACKEND_URL.
   const WS_URL = import.meta.env.VITE_BACKEND_URL
     ? `${import.meta.env.VITE_BACKEND_URL.replace(/^http/, "ws")}/ws`
-    : `ws://${window.location.hostname}:8000/ws`;
+    : `ws://${window.location.host}/ws`;
 
   // Gemini outputs PCM at 24 kHz; we send PCM at 16 kHz
   const GEMINI_OUTPUT_SAMPLE_RATE = 24000;
@@ -244,6 +316,20 @@
   let audioQueue: AudioBuffer[] = [];
   let isPlayingAudio = false;
   let nextPlayTime = 0;
+
+  // ─── Debug state (visible on screen) ─────────────────────────────────────────
+  let dbg = {
+    ws: "DISCONNECTED",        // WebSocket connection state
+    audioCtx: "—",             // AudioContext.state
+    chunksRx: 0,               // audio chunks received from Gemini
+    micTx: 0,                  // mic packets sent to Gemini
+    lastMsg: "—",              // last WS message type received
+  };
+  function dbgTick() {
+    if (audioCtx) dbg.audioCtx = audioCtx.state;
+    dbg = dbg; // trigger Svelte reactivity
+  }
+  setInterval(dbgTick, 500);
 
   function downsampleTo16k(input: Float32Array, fromRate: number): Float32Array {
     if (fromRate === GEMINI_INPUT_SAMPLE_RATE) return input;
@@ -262,9 +348,11 @@
 
     liveWs = new WebSocket(WS_URL);
     liveWs.binaryType = "arraybuffer";
+    dbg.ws = "CONNECTING"; dbg = dbg;
 
     liveWs.onopen = async () => {
-      console.log("[OmniBot] Connected to Gemini Live via /ws proxy");
+      console.log("[OmniBot] WS open →", WS_URL);
+      dbg.ws = "CONNECTED"; dbg = dbg;
       setState("STATE_LISTENING");
       await startAudioCapture();
       isStreaming = true;
@@ -273,7 +361,10 @@
     liveWs.onmessage = async (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data as string);
+        dbg.lastMsg = msg.type ?? "?"; dbg = dbg;
+        console.log("[OmniBot] WS msg:", msg.type, msg.type === "audio" ? `(${(msg.data?.length ?? 0)} chars b64)` : "");
         if (msg.type === "audio") {
+          dbg.chunksRx++; dbg = dbg;
           setState("STATE_SPEAKING");
           enqueueAudio(msg.data as string);
         } else if (msg.type === "turn_complete") {
@@ -290,42 +381,47 @@
       }
     };
 
-    liveWs.onclose = () => {
-      console.log("[OmniBot] WebSocket closed");
+    liveWs.onclose = (ev) => {
+      console.log("[OmniBot] WS closed", ev.code, ev.reason);
+      dbg.ws = "DISCONNECTED"; dbg = dbg;
       cleanupAudio();
       isStreaming = false;
       setState("STATE_IDLE");
     };
 
     liveWs.onerror = (err) => {
-      console.error("[OmniBot] WebSocket error:", err);
+      console.error("[OmniBot] WS error:", err);
+      dbg.ws = "ERROR"; dbg = dbg;
       liveError = "Connection failed. Is the backend running?";
       stopLiveSession();
     };
   }
 
   async function startAudioCapture() {
-    // Use existing activeStream if available (already has mic permission),
-    // otherwise request audio-only stream.
     const micStream =
       activeStream ??
       (await navigator.mediaDevices.getUserMedia({ audio: true }));
 
     // Create AudioContext at browser native rate; we'll downsample manually.
     audioCtx = new AudioContext();
-    const source = audioCtx.createMediaStreamSource(micStream);
+    // Resume immediately — AudioContext created outside a user gesture starts suspended.
+    await audioCtx.resume();
 
-    // ScriptProcessor is deprecated but universally supported; buffer size 4096.
+    const source = audioCtx.createMediaStreamSource(micStream);
     scriptProcessor = audioCtx.createScriptProcessor(4096, 1, 1);
     source.connect(scriptProcessor);
-    // Connect to destination to keep the graph alive (audio is muted via gain=0).
+
+    // Silent gain keeps the graph alive without looping mic audio to speakers.
     const silentGain = audioCtx.createGain();
     silentGain.gain.value = 0;
     scriptProcessor.connect(silentGain);
     silentGain.connect(audioCtx.destination);
 
+    console.log("[OmniBot] AudioContext sampleRate:", audioCtx.sampleRate, "state:", audioCtx.state);
+
     scriptProcessor.onaudioprocess = (e: AudioProcessingEvent) => {
-      if (!liveWs || liveWs.readyState !== WebSocket.OPEN) return;
+      // Don't send mic audio while bot is speaking — prevents echo feedback.
+      if (!liveWs || liveWs.readyState !== WebSocket.OPEN || isPlayingAudio) return;
       const raw = e.inputBuffer.getChannelData(0);
       const pcm32 = downsampleTo16k(raw, audioCtx!.sampleRate);
       const pcm16 = new Int16Array(pcm32.length);
@@ -333,6 +429,7 @@
         pcm16[i] = Math.max(-32768, Math.min(32767, Math.round(pcm32[i] * 32767)));
       }
       liveWs.send(pcm16.buffer);
+      dbg.micTx++;
     };
   }
 
@@ -357,21 +454,45 @@
   function schedulePlayback() {
     if (!audioCtx || audioQueue.length === 0) {
       isPlayingAudio = false;
-      // All queued audio played — go back to listening
       if (isStreaming) setState("STATE_LISTENING");
       return;
     }
 
     isPlayingAudio = true;
     const buf = audioQueue.shift()!;
-    const src = audioCtx.createBufferSource();
-    src.buffer = buf;
-    src.connect(audioCtx.destination);
 
-    const startAt = Math.max(audioCtx.currentTime, nextPlayTime);
-    src.start(startAt);
-    nextPlayTime = startAt + buf.duration;
-    src.onended = () => schedulePlayback();
+    const play = () => {
+      const src = audioCtx!.createBufferSource();
+      src.buffer = buf;
+      src.connect(audioCtx!.destination);
+      const startAt = Math.max(audioCtx!.currentTime, nextPlayTime);
+      src.start(startAt);
+      nextPlayTime = startAt + buf.duration;
+      src.onended = () => schedulePlayback();
+    };
+
+    // AudioContext may be suspended if created outside a user-gesture context.
+    if (audioCtx.state === "suspended") {
+      audioCtx.resume().then(play);
+    } else {
+      play();
+    }
+  }
+
+  /** Plays a 440 Hz beep for 0.4 s — verifies AudioContext works independently of Gemini. */
+  async function playTestTone() {
+    const ctx = new AudioContext();
+    await ctx.resume();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = 440;
+    gain.gain.value = 0.3;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.4);
+    osc.onended = () => ctx.close();
+    console.log("[OmniBot] Test tone played, ctx state:", ctx.state);
   }
 
   function cleanupAudio() {
@@ -466,27 +587,21 @@
           </div>
         </div>
 
+        <!-- Debug panel -->
+        <div class="debug-panel">
+          <div>WS: <b>{dbg.ws}</b></div>
+          <div>AudioCtx: <b>{dbg.audioCtx}</b></div>
+          <div>Chunks RX: <b>{dbg.chunksRx}</b></div>
+          <div>Mic TX: <b>{dbg.micTx}</b></div>
+          <div>Last msg: <b>{dbg.lastMsg}</b></div>
+          {#if liveError}<div style="color:#f44">ERR: {liveError}</div>{/if}
+        </div>
+
         <div class="controls">
-          <button
-            class="talk-btn"
-            class:active={isStreaming}
-            on:click={() => (isStreaming ? stopLiveSession() : startLiveSession())}
-          >
-            {isStreaming ? "DISCONNECT" : "TALK TO OMNIBOT"}
+          <button on:click={playTestTone}>Test Audio</button>
+          <button on:click={() => isStreaming ? stopLiveSession() : startLiveSession()}>
+            {isStreaming ? "Disconnect" : "Connect Gemini"}
           </button>
-          {#if liveError}
-            <span class="live-error">{liveError}</span>
-          {/if}
-          <button on:click={() => setState("STATE_IDLE")}>Idle</button>
-          <button on:click={() => setState("STATE_LISTENING")}>Listen</button>
-          <button on:click={() => setState("STATE_THINKING")}>Think</button>
-          <button on:click={() => setState("STATE_SPEAKING")}>Speak</button>
-          <button on:click={() => setState("STATE_INSTRUCTING")}
-            >Instruct</button
-          >
-          <button on:click={() => setState("STATE_EXCHANGING_IDENTITY")}
-            >Exchange ID</button
-          >
           <a href="/social" target="_blank" class="button-link">Dream Feed</a>
         </div>
       </div>
@@ -905,27 +1020,18 @@
     align-items: center;
   }
 
-  .talk-btn {
-    background: transparent;
-    border: 2px solid #00ffcc;
+  .debug-panel {
+    position: absolute;
+    top: 2rem;
+    right: 2rem;
+    font-size: 0.7rem;
+    line-height: 1.6;
     color: #00ffcc;
-    padding: 0.5rem 1.5rem;
-    cursor: pointer;
-    font-family: inherit;
-    font-weight: bold;
-    letter-spacing: 0.1em;
-    animation: pulseBtn 2s infinite ease-in-out;
-  }
-
-  .talk-btn.active {
-    background: #00ffcc;
-    color: #000;
-    animation: none;
-  }
-
-  @keyframes pulseBtn {
-    0%, 100% { box-shadow: 0 0 6px #00ffcc; }
-    50% { box-shadow: 0 0 20px #00ffcc; }
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid #00ffcc44;
+    padding: 0.5rem 0.8rem;
+    font-family: "Space Mono", monospace;
+    pointer-events: none;
   }
 
   .live-error {
