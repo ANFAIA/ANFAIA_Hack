@@ -295,9 +295,9 @@
         {#each discoveries as dream}
           <div class="card">
             <div class="watercolor-frame">
-              <!-- Dynamically generating the NanoBanana2 dream via simple prompt -->
+              <!-- Dynamically generating the NanoBanana2 dream, or use loaded local seed image -->
               <img
-                src={`https://image.pollinations.ai/prompt/watercolor%20painting%20style%20${encodeURIComponent(dream.description)}?width=400&height=300&nologo=true`}
+                src={dream.image_url ? dream.image_url : `https://image.pollinations.ai/prompt/watercolor%20painting%20style%20${encodeURIComponent(dream.description)}?width=400&height=300&nologo=true`}
                 alt="Watercolor Dream"
                 class="watercolor-effect"
               />

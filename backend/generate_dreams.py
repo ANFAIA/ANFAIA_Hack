@@ -10,7 +10,7 @@ load_dotenv()
 api_key = os.environ.get("GEMINI_API_KEY")
 client = genai.Client(api_key=api_key)
 
-IMAGE_DIR = "../docs/image_examples"
+IMAGE_DIR = "../frontend/public/image_examples"
 OUTPUT_DIR = "../frontend/public/dreams"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -89,6 +89,7 @@ for idx, img_name in enumerate(images):
         print(f"Saved fallback dream to {out_path}")
     
     public_url = f"/dreams/{out_name}"
+    original_url = f"/image_examples/{img_name}"
     
     lat = mock_coords[idx % len(mock_coords)][0]
     lng = mock_coords[idx % len(mock_coords)][1]
@@ -99,7 +100,8 @@ for idx, img_name in enumerate(images):
         lat=lat,
         lng=lng,
         embedding=[0.5] * 768,
-        image_url=public_url
+        image_url=public_url,
+        original_image_url=original_url
     )
     
 print("\nAll initial dreams have been generated and saved to the shared folder successfully!")

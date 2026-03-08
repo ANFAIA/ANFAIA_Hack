@@ -26,7 +26,9 @@ def init_db():
         description TEXT,
         type TEXT,
         lat REAL DEFAULT 0.0,
-        lng REAL DEFAULT 0.0
+        lng REAL DEFAULT 0.0,
+        image_url TEXT,
+        original_image_url TEXT
     )
     ''')
     
@@ -41,11 +43,11 @@ def get_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-def add_discovery(description: str, type: str, embedding: list[float], lat: float = 0.0, lng: float = 0.0):
+def add_discovery(description: str, type: str, embedding: list[float], lat: float = 0.0, lng: float = 0.0, image_url: str = "", original_image_url: str = ""):
     conn = get_connection()
     c = conn.cursor()
     # Insert metadata
-    c.execute('INSERT INTO discovery_metadata (description, type, lat, lng) VALUES (?, ?, ?, ?)', (description, type, lat, lng))
+    c.execute('INSERT INTO discovery_metadata (description, type, lat, lng, image_url, original_image_url) VALUES (?, ?, ?, ?, ?, ?)', (description, type, lat, lng, image_url, original_image_url))
     discovery_id = c.lastrowid
     
     # Insert embedding into vector table
@@ -66,7 +68,7 @@ def add_discovery(description: str, type: str, embedding: list[float], lat: floa
 def get_all_discoveries():
     conn = get_connection()
     c = conn.cursor()
-    c.execute('SELECT id, timestamp, description, type, lat, lng FROM discovery_metadata ORDER BY timestamp DESC')
+    c.execute('SELECT id, timestamp, description, type, lat, lng, image_url, original_image_url FROM discovery_metadata ORDER BY timestamp DESC')
     rows = c.fetchall()
     conn.close()
     return [dict(row) for row in rows]

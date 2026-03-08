@@ -33,6 +33,7 @@ class Discovery(BaseModel):
     lat: float = 0.0
     lng: float = 0.0
     image_url: str = ""
+    original_image_url: str = ""
 
 
 @app.get("/")
@@ -60,7 +61,8 @@ async def add_discovery(discovery: Discovery):
             embedding=discovery.embedding,
             lat=discovery.lat,
             lng=discovery.lng,
-            image_url=discovery.image_url
+            image_url=discovery.image_url,
+            original_image_url=discovery.original_image_url
         )
         return {"status": "ok", "id": discovery_id}
     except Exception as e:
@@ -89,10 +91,20 @@ async def bot_discover(file: UploadFile = File(...), lat: float = Form(0.0), lng
         except Exception as e:
             print("Gemini analysis error:", e)
     
+    # 1.1 Save the actual incoming file so the bot can view the original image
+    uploads_dir = "../frontend/public/uploads"
+    os.makedirs(uploads_dir, exist_ok=True)
+    count_val = database.get_connection().cursor().execute('SELECT COUNT(*) FROM discovery_metadata').fetchone()[0]
+    
+    orig_name = f"bot_orig_{count_val}.jpg"
+    with open(os.path.join(uploads_dir, orig_name), "wb") as f_orig:
+        f_orig.write(image_bytes)
+    original_url = f"/uploads/{orig_name}"
+    
     # 2. Generate NanoBanana2 Dream
     output_dir = "../frontend/public/dreams"
     os.makedirs(output_dir, exist_ok=True)
-    out_name = f"bot_dream_{database.get_connection().cursor().execute('SELECT COUNT(*) FROM discovery_metadata').fetchone()[0]}.jpg"
+    out_name = f"bot_dream_{count_val}.jpg"
     out_path = os.path.join(output_dir, out_name)
     public_url = f"/dreams/{out_name}"
     
@@ -127,10 +139,11 @@ async def bot_discover(file: UploadFile = File(...), lat: float = Form(0.0), lng
         lat=lat,
         lng=lng,
         embedding=[0.5] * 768,
-        image_url=public_url
+        image_url=public_url,
+        original_image_url=original_url
     )
     
-    return {"status": "ok", "discovery_id": discovery_id, "image_url": public_url, "description": description}
+    return {"status": "ok", "discovery_id": discovery_id, "image_url": public_url, "original_image_url": original_url, "description": description}
 
 @app.get("/dreams/recap")
 async def get_dream_recap():
@@ -152,7 +165,8 @@ async def get_dream_recap():
                 "prompt": prompt,
                 "lat": d["lat"],
                 "lng": d["lng"],
-                "image_url": d["image_url"] if "image_url" in d.keys() else ""
+                "image_url": d["image_url"] if "image_url" in d.keys() else "",
+                "original_image_url": d["original_image_url"] if "original_image_url" in d.keys() else ""
             })
             
         return {
