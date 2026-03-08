@@ -19,6 +19,11 @@
   let instruction = "ALL CLEAR";
   let speechText = "";
 
+  // Speech Recognition Debug
+  let recognition: any;
+  let isListeningDebug = false;
+  let transcript = "";
+
   // Bot Identity Mock
   const botId = "OMNIBOT-A1";
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${botId}`;
@@ -154,6 +159,50 @@
     );
   }
 
+  function toggleSpeechDebug() {
+    if (
+      !("webkitSpeechRecognition" in window) &&
+      !("SpeechRecognition" in window)
+    ) {
+      alert("Speech Recognition API not supported in this browser.");
+      return;
+    }
+
+    if (isListeningDebug) {
+      if (recognition) recognition.stop();
+      isListeningDebug = false;
+    } else {
+      const SpeechRecognition =
+        window.SpeechRecognition || (window as any).webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+
+      recognition.onresult = (event: any) => {
+        let interimTranscript = "";
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            transcript = event.results[i][0].transcript;
+          } else {
+            interimTranscript = event.results[i][0].transcript;
+          }
+        }
+        if (interimTranscript) {
+          transcript = interimTranscript;
+        }
+      };
+
+      recognition.onend = () => {
+        if (isListeningDebug) {
+          recognition.start(); // auto restart
+        }
+      };
+
+      recognition.start();
+      isListeningDebug = true;
+    }
+  }
+
   let cocoModel: null | cocoSsd.ObjectDetection = null;
 
   onMount(async () => {
@@ -254,6 +303,15 @@
         <div class="streaming-status">
           [Mode: {streamMode}]
         </div>
+
+        <!-- Debug Transcript HUD -->
+        {#if isListeningDebug}
+          <div class="debug-transcript">
+            <strong>HEARING:</strong>
+            {transcript || "listening..."}
+          </div>
+        {/if}
+
         {#if currentState === "STATE_INSTRUCTING"}
           <h1 class="instruction-text">{instruction}</h1>
         {/if}
@@ -319,6 +377,9 @@
           >
           <button on:click={() => setState("STATE_EXCHANGING_IDENTITY")}
             >Exchange ID</button
+          >
+          <button on:click={toggleSpeechDebug}
+            >{isListeningDebug ? "Stop Hearing" : "Debug Hearing"}</button
           >
           <a href="/social" target="_blank" class="button-link">Dream Feed</a>
         </div>
@@ -406,6 +467,19 @@
     padding: 0.5rem;
     border: 1px solid #ff00ff;
     background: rgba(0, 0, 0, 0.5);
+  }
+
+  .debug-transcript {
+    position: absolute;
+    top: 5rem;
+    left: 2rem;
+    max-width: 300px;
+    font-size: 0.9rem;
+    color: #00ffcc;
+    padding: 0.5rem;
+    border: 1px solid #00ffcc;
+    background: rgba(0, 0, 0, 0.7);
+    border-radius: 8px;
   }
 
   .hidden-vision-source {
