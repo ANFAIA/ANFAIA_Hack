@@ -24,6 +24,60 @@
   let isListeningDebug = false;
   let transcript = "";
 
+  // Audio Visualizer
+  let canvasElement: HTMLCanvasElement;
+  let audioContext: AudioContext;
+  let analyser: AnalyserNode;
+  let dataArray: Uint8Array;
+
+  function startVisualizer(stream: MediaStream) {
+    if (!canvasElement) return;
+    const AudioContextClass =
+      window.AudioContext || (window as any).webkitAudioContext;
+    audioContext = new AudioContextClass();
+    analyser = audioContext.createAnalyser();
+    const source = audioContext.createMediaStreamSource(stream);
+    source.connect(analyser);
+    analyser.fftSize = 256;
+    const bufferLength = analyser.frequencyBinCount;
+    dataArray = new Uint8Array(bufferLength);
+
+    drawVisualizer();
+  }
+
+  function drawVisualizer() {
+    if (!canvasElement || !analyser) return;
+    requestAnimationFrame(drawVisualizer);
+
+    analyser.getByteTimeDomainData(dataArray as any);
+    const canvasCtx = canvasElement.getContext("2d");
+    if (!canvasCtx) return;
+
+    canvasCtx.fillStyle = "rgba(0, 0, 0, 0.2)";
+    canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+    canvasCtx.lineWidth = 2;
+    canvasCtx.strokeStyle = "#00ffcc";
+    canvasCtx.beginPath();
+
+    const sliceWidth = (canvasElement.width * 1.0) / dataArray.length;
+    let x = 0;
+
+    for (let i = 0; i < dataArray.length; i++) {
+      const v = dataArray[i] / 128.0;
+      const y = (v * canvasElement.height) / 2;
+
+      if (i === 0) {
+        canvasCtx.moveTo(x, y);
+      } else {
+        canvasCtx.lineTo(x, y);
+      }
+      x += sliceWidth;
+    }
+    canvasCtx.lineTo(canvasElement.width, canvasElement.height / 2);
+    canvasCtx.stroke();
+  }
+
   // Bot Identity Mock
   const botId = "OMNIBOT-A1";
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${botId}`;
@@ -240,6 +294,9 @@
   $: if (videoElement && activeStream) {
     videoElement.srcObject = activeStream;
     videoElement.play();
+  }
+  $: if (canvasElement && activeStream && !audioContext) {
+    startVisualizer(activeStream);
   }
 
   function scanEnvironment() {
@@ -463,6 +520,16 @@
     padding: 0.5rem;
     border: 1px solid #ff00ff;
     background: rgba(0, 0, 0, 0.5);
+  }
+
+  .audio-visualizer {
+    position: absolute;
+    top: 5rem;
+    left: 2rem;
+    border: 1px solid #00ffcc;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 10;
   }
 
   .hearing-captions {
