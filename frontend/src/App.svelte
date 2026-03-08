@@ -29,19 +29,28 @@
 
   // Social Network Data (Dreams)
   let discoveries: any[] = [];
+  let feedLoading = true;
+  let feedError = "";
 
-  // API base URL — set VITE_BACKEND_URL env var at build time for production
-  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+  // In dev, use relative URLs so Vite proxy forwards to localhost:8000.
+  // In production, set VITE_BACKEND_URL to the deployed backend.
+  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
 
   async function fetchDreams() {
+    feedError = "";
     try {
       const resp = await fetch(`${BACKEND_URL}/discoveries`);
       if (resp.ok) {
         const payload = await resp.json();
-        discoveries = payload.data;
+        discoveries = payload.data ?? [];
+      } else {
+        feedError = `Server error ${resp.status}`;
       }
     } catch (err) {
+      feedError = "Cannot reach backend. Is the server running?";
       console.error("Failed to load dreams:", err);
+    } finally {
+      feedLoading = false;
     }
   }
 
@@ -121,7 +130,9 @@
 
   onMount(async () => {
     if (isSocialPage) {
-      fetchDreams();
+      await fetchDreams();
+      // Auto-refresh every 8 s so new dreams appear without a reload
+      setInterval(fetchDreams, 8000);
       return;
     }
 
@@ -203,33 +214,66 @@
     return new Blob([arr], { type: mime });
   }
 
-  // ─── Cooldowns ───────────────────────────────────────────────────────────────
-  let lastDiscoverMs = 0;
-  const DISCOVER_COOLDOWN = 30_000; // max one dream per 30 s
-  let lastInstructMs = 0;
-  const INSTRUCT_COOLDOWN = 10_000; // max one instruction per 10 s
+  // ─── Object-change-triggered capture ─────────────────────────────────────────
+  // A frame is only sent to the backend when COCO-SSD detects a different set
+  // of objects than the previous scan — no timer, no redundant captures.
+  let lastDream = "";
+  let prevObjectKey = "";   // sorted class names of last detected objects
+  let dreamPending = false; // prevent overlapping requests
 
-  async function sendToDreamNetwork() {
-    const now = Date.now();
-    if (now - lastDiscoverMs < DISCOVER_COOLDOWN) return;
-    lastDiscoverMs = now;
+  async function dreamIfObjectsChanged(predictions: cocoSsd.DetectedObject[]) {
+    // Use ALL detected classes (lower threshold 0.3) to build the scene key.
+    // Including "person" means a new person appearing also triggers a capture.
+    // Gemini Vision will describe the full scene richly regardless of class.
+    const key = predictions
+      .filter(p => p.score > 0.3)
+      .map(p => p.class)
+      .sort()
+      .join(",");
+
+    dbg.sceneKey = key || "(none)"; dbg = dbg;
+
+    if (!key) return;                  // nothing at all visible
+    if (key === prevObjectKey) return; // scene unchanged
+    if (dreamPending) return;          // request in flight
+
+    prevObjectKey = key;
+    console.log("[OmniBot] Scene changed →", key);
 
     const blob = captureFrame();
-    if (!blob) return;
+    if (!blob) { console.warn("[OmniBot] captureFrame returned null"); return; }
 
-    setState("STATE_THINKING");
-    streamMode = "DREAMING OBJECT...";
-
+    dreamPending = true;
     const form = new FormData();
     form.append("file", blob, "frame.jpg");
     form.append("lat", "0");
     form.append("lng", "0");
+    form.append("scene_labels", key); // COCO-SSD labels as fallback for Gemini vision
+
     try {
-      await fetch(`${BACKEND_URL}/bot/discover`, { method: "POST", body: form });
+      console.log("[OmniBot] Posting to /bot/discover …");
+      const resp = await fetch(`${BACKEND_URL}/bot/discover`, { method: "POST", body: form });
+      if (!resp.ok) { console.error("[OmniBot] /bot/discover status:", resp.status); return; }
+      const data = await resp.json();
+      if (data.saved) {
+        lastDream = data.description ?? "";
+        dbg.dreams++; dbg = dbg;
+        console.log("[OmniBot] Dream saved:", lastDream);
+        if (currentState !== "STATE_LISTENING" && currentState !== "STATE_SPEAKING") {
+          setState("STATE_THINKING");
+          streamMode = `DREAMING: ${lastDream.slice(0, 35)}`;
+        }
+      }
     } catch (e) {
-      console.error("[OmniBot] Dream network error:", e);
+      console.error("[OmniBot] Dream capture error:", e);
+    } finally {
+      dreamPending = false;
     }
   }
+
+  // ─── Cooldown (brain instruction only) ───────────────────────────────────────
+  let lastInstructMs = 0;
+  const INSTRUCT_COOLDOWN = 10_000;
 
   async function fetchBrainInstruction() {
     const now = Date.now();
@@ -254,6 +298,10 @@
 
       const predictions = await cocoModel.detect(videoElement);
 
+      // Log everything COCO-SSD sees above 0.3
+      const labels = predictions.filter(p => p.score > 0.3).map(p => `${p.class}(${p.score.toFixed(2)})`);
+      dbg.detected = labels.join(", ") || "(none)"; dbg = dbg;
+
       const isPhoneDetected = predictions.some(
         (p: cocoSsd.DetectedObject) => p.class === "cell phone" && p.score > 0.5,
       );
@@ -265,6 +313,9 @@
       const hasAnyObject = predictions.some(
         (p: cocoSsd.DetectedObject) => p.score > 0.5,
       );
+
+      // Always check for new objects regardless of other states
+      dreamIfObjectsChanged(predictions);
 
       if (isPhoneDetected) {
         // ① Another phone → open mouth, show QR, pause live chat
@@ -279,13 +330,15 @@
         // state (LISTENING / SPEAKING) managed by live session events
 
       } else if (hasAnyObject) {
-        // ③ Object but no person/pet/phone → snapshot → dream social network
+        // ③ Object only → show thinking state
         if (isStreaming) stopLiveSession();
-        sendToDreamNetwork();
+        if (currentState !== "STATE_THINKING") setState("STATE_THINKING");
+        streamMode = "SCANNING OBJECT...";
 
       } else {
         // ④ Nothing detected → ask brain for exploration instruction
         if (isStreaming) stopLiveSession();
+        prevObjectKey = ""; // reset so next appearance triggers a new capture
         setState("STATE_INSTRUCTING");
         streamMode = "EXPLORING...";
         fetchBrainInstruction();
@@ -311,6 +364,7 @@
   let scriptProcessor: ScriptProcessorNode | null = null;
   let isStreaming = false;
   let liveError = "";
+  let liveReconnectAt = 0; // timestamp after which reconnection is allowed
 
   // Playback queue so audio chunks play sequentially
   let audioQueue: AudioBuffer[] = [];
@@ -318,12 +372,16 @@
   let nextPlayTime = 0;
 
   // ─── Debug state (visible on screen) ─────────────────────────────────────────
+  let showDebug = false;
   let dbg = {
     ws: "DISCONNECTED",        // WebSocket connection state
     audioCtx: "—",             // AudioContext.state
     chunksRx: 0,               // audio chunks received from Gemini
     micTx: 0,                  // mic packets sent to Gemini
     lastMsg: "—",              // last WS message type received
+    detected: "—",             // current COCO-SSD detections
+    sceneKey: "—",             // current object key
+    dreams: 0,                 // total dreams saved
   };
   function dbgTick() {
     if (audioCtx) dbg.audioCtx = audioCtx.state;
@@ -343,6 +401,7 @@
 
   async function startLiveSession() {
     if (liveWs) return;
+    if (Date.now() < liveReconnectAt) return; // still in cooldown
     liveError = "";
     setState("STATE_THINKING");
 
@@ -386,6 +445,9 @@
       dbg.ws = "DISCONNECTED"; dbg = dbg;
       cleanupAudio();
       isStreaming = false;
+      liveWs = null;
+      // Back-off: wait 3 s before allowing reconnect (avoids hammering on 1011 timeout)
+      liveReconnectAt = Date.now() + 3000;
       setState("STATE_IDLE");
     };
 
@@ -479,22 +541,6 @@
     }
   }
 
-  /** Plays a 440 Hz beep for 0.4 s — verifies AudioContext works independently of Gemini. */
-  async function playTestTone() {
-    const ctx = new AudioContext();
-    await ctx.resume();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.frequency.value = 440;
-    gain.gain.value = 0.3;
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.4);
-    osc.onended = () => ctx.close();
-    console.log("[OmniBot] Test tone played, ctx state:", ctx.state);
-  }
-
   function cleanupAudio() {
     scriptProcessor?.disconnect();
     scriptProcessor = null;
@@ -531,10 +577,6 @@
         muted
       ></video>
       <div class="hud-overlay">
-        <!-- Status indicator for the requested Context-Aware Streaming -->
-        <div class="streaming-status">
-          [Mode: {streamMode}]
-        </div>
         {#if currentState === "STATE_INSTRUCTING"}
           <h1 class="instruction-text">{instruction}</h1>
         {/if}
@@ -587,21 +629,25 @@
           </div>
         </div>
 
-        <!-- Debug panel -->
+        <!-- Debug panel (tap corner to toggle) -->
+        <button class="debug-toggle" on:click={() => (showDebug = !showDebug)}>
+          {showDebug ? "✕" : "⚙"}
+        </button>
+        {#if showDebug}
         <div class="debug-panel">
+          <div>Mode: <b>{streamMode}</b></div>
           <div>WS: <b>{dbg.ws}</b></div>
           <div>AudioCtx: <b>{dbg.audioCtx}</b></div>
           <div>Chunks RX: <b>{dbg.chunksRx}</b></div>
           <div>Mic TX: <b>{dbg.micTx}</b></div>
-          <div>Last msg: <b>{dbg.lastMsg}</b></div>
+          <div>Seen: <b>{dbg.detected}</b></div>
+          <div>Key: <b>{dbg.sceneKey}</b></div>
+          <div>Dreams: <b>{dbg.dreams}</b></div>
           {#if liveError}<div style="color:#f44">ERR: {liveError}</div>{/if}
         </div>
+        {/if}
 
         <div class="controls">
-          <button on:click={playTestTone}>Test Audio</button>
-          <button on:click={() => isStreaming ? stopLiveSession() : startLiveSession()}>
-            {isStreaming ? "Disconnect" : "Connect Gemini"}
-          </button>
           <a href="/social" target="_blank" class="button-link">Dream Feed</a>
         </div>
       </div>
@@ -610,33 +656,51 @@
     <div class="dream-feed">
       <h1>OmniBot Social Network</h1>
 
-
+      {#if feedLoading}
+        <p class="feed-status">Loading dreams…</p>
+      {:else if feedError}
+        <p class="feed-status feed-status--error">{feedError}</p>
+        <button class="retry-btn" on:click={fetchDreams}>Retry</button>
+      {:else if discoveries.length === 0}
+        <p class="feed-status">No dreams generated yet. Point the bot at something interesting!</p>
+      {:else}
+        <p class="feed-count">{discoveries.length} dream{discoveries.length === 1 ? "" : "s"} — refreshing every 8 s</p>
+      {/if}
 
       <div class="gallery">
-        {#if discoveries.length === 0}
-          <p>No dreams generated yet.</p>
-        {/if}
-        {#each discoveries as dream}
+        {#each discoveries as dream (dream.id)}
           <div class="card">
             <div class="watercolor-frame">
               {#if dream.original_image_url}
                 <div class="image-half">
-                  <img src={dream.original_image_url} alt="Original Capture" class="original-effect" />
+                  <img
+                    src={dream.original_image_url}
+                    alt="Original Capture"
+                    class="original-effect"
+                    on:error={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  />
                   <p class="image-label">Camera Reality</p>
                 </div>
               {/if}
               <div class="image-half" class:full-width={!dream.original_image_url}>
-                <!-- Dynamically generating the NanoBanana2 dream, or use loaded local seed image -->
                 <img
-                  src={dream.image_url ? dream.image_url : `https://image.pollinations.ai/prompt/watercolor%20painting%20style%20${encodeURIComponent(dream.description)}?width=400&height=300&nologo=true`}
+                  src={dream.image_url
+                    ? dream.image_url
+                    : `https://image.pollinations.ai/prompt/watercolor%20painting%20style%20${encodeURIComponent(dream.description)}?width=400&height=300&nologo=true`}
                   alt="Watercolor Dream"
                   class="watercolor-effect"
+                  on:error={(e) => {
+                    const img = e.currentTarget as HTMLImageElement;
+                    if (!img.src.includes("pollinations")) {
+                      img.src = `https://image.pollinations.ai/prompt/watercolor%20painting%20style%20${encodeURIComponent(dream.description)}?width=400&height=300&nologo=true`;
+                    }
+                  }}
                 />
                 <p class="image-label">Bot's Dream</p>
               </div>
             </div>
-            <p><strong>{dream.timestamp}</strong> - {dream.type}</p>
-            <p>{dream.description}</p>
+            <p class="card-meta"><strong>{dream.timestamp}</strong> — {dream.type}</p>
+            <p class="card-desc">{dream.description}</p>
             {#if dream.lat && dream.lng}
               <div class="map-frame">
                 <iframe
@@ -646,8 +710,7 @@
                   style="border:0;"
                   loading="lazy"
                   src={`https://maps.google.com/maps?q=${dream.lat},${dream.lng}&z=14&output=embed`}
-                >
-                </iframe>
+                ></iframe>
               </div>
             {/if}
           </div>
@@ -722,16 +785,6 @@
     z-index: 1;
   }
 
-  .streaming-status {
-    position: absolute;
-    top: 2rem;
-    left: 2rem;
-    font-size: 0.8rem;
-    color: #ff00ff;
-    padding: 0.5rem;
-    border: 1px solid #ff00ff;
-    background: rgba(0, 0, 0, 0.5);
-  }
 
   .hidden-vision-source {
     position: absolute;
@@ -1020,10 +1073,32 @@
     align-items: center;
   }
 
+  .debug-toggle {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 10;
+    background: transparent;
+    border: 1px solid #00ffcc44;
+    color: #00ffcc88;
+    font-size: 1rem;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    cursor: pointer;
+    line-height: 1;
+  }
+
+  .debug-toggle:hover {
+    border-color: #00ffcc;
+    color: #00ffcc;
+    background: transparent;
+  }
+
   .debug-panel {
     position: absolute;
-    top: 2rem;
-    right: 2rem;
+    top: 3.5rem;
+    right: 1rem;
     font-size: 0.7rem;
     line-height: 1.6;
     color: #00ffcc;
@@ -1136,6 +1211,44 @@
     /* Simulate a low-detailed watercolor look via CSS filters */
     filter: saturate(1.5) contrast(1.1) brightness(1.1) blur(0.5px) sepia(0.2);
     mix-blend-mode: multiply;
+  }
+
+  .feed-status {
+    color: #aaa;
+    margin-top: 1rem;
+    font-size: 0.9rem;
+  }
+
+  .feed-status--error {
+    color: #f44;
+  }
+
+  .feed-count {
+    color: #00ffcc55;
+    font-size: 0.75rem;
+    margin-top: 0.5rem;
+  }
+
+  .retry-btn {
+    margin-top: 0.5rem;
+    background: transparent;
+    border: 1px solid #f44;
+    color: #f44;
+    padding: 0.4rem 1rem;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .card-meta {
+    margin-top: 0.75rem;
+    color: #888;
+    font-size: 0.75rem;
+  }
+
+  .card-desc {
+    margin-top: 0.25rem;
+    color: #aaa;
+    font-size: 0.85rem;
   }
 
   .card p {

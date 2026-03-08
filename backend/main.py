@@ -69,7 +69,7 @@ async def add_discovery(discovery: Discovery):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/bot/discover")
-async def bot_discover(file: UploadFile = File(...), lat: float = Form(0.0), lng: float = Form(0.0)):
+async def bot_discover(file: UploadFile = File(...), lat: float = Form(0.0), lng: float = Form(0.0), scene_labels: str = Form("")):
     """
     Receives a camera frame, describes it with Gemini, checks if the scene is
     meaningfully new compared to recent discoveries, and only saves + generates
@@ -78,12 +78,13 @@ async def bot_discover(file: UploadFile = File(...), lat: float = Form(0.0), lng
     image_bytes = await file.read()
     mime = file.content_type or "image/jpeg"
 
-    # 1. Describe the scene with Gemini Vision
-    description = "A mysterious scene encountered by the bot."
+    # 1. Describe the scene with Gemini Vision; fall back to COCO-SSD labels from frontend
+    fallback = f"A scene containing: {scene_labels}" if scene_labels else "A curious scene discovered by the bot."
+    description = fallback
     if client:
         try:
             response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-2.0-flash',
                 contents=[
                     "Describe the main subject of this physical environment or object in one short, clear sentence.",
                     types.Part.from_bytes(data=image_bytes, mime_type=mime)
@@ -92,7 +93,7 @@ async def bot_discover(file: UploadFile = File(...), lat: float = Form(0.0), lng
             description = response.text.strip()
             print(f"[discover] Scene: {description}")
         except Exception as e:
-            print("Gemini vision error:", e)
+            print(f"Gemini vision error (using COCO labels as fallback): {type(e).__name__}")
 
     # 2. Save original image (novelty is decided by the frontend via COCO-SSD)
     uploads_dir = "../frontend/public/uploads"
@@ -187,6 +188,8 @@ async def bot_instruct():
     """
     if not client:
         return {"instruction": "EXPLORE FORWARD"}
+    import random
+    fallbacks = ["TURN LEFT", "MOVE FORWARD", "SCAN AREA", "LOOK UP", "ROTATE SLOWLY", "EXPLORE RIGHT", "SEARCH AHEAD"]
     try:
         response = client.models.generate_content(
             model='gemini-2.5-flash',
@@ -199,8 +202,8 @@ async def bot_instruct():
         )
         return {"instruction": response.text.strip().upper()[:40]}
     except Exception as e:
-        print("Brain instruct error:", e)
-        return {"instruction": "SCANNING..."}
+        print(f"Brain instruct error (using fallback): {type(e).__name__}")
+        return {"instruction": random.choice(fallbacks)}
 
 @app.get("/dreams/recap")
 async def get_dream_recap():
