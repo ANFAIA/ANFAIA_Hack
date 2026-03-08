@@ -159,48 +159,45 @@
     );
   }
 
-  function toggleSpeechDebug() {
+  function startContinuousHearing() {
     if (
       !("webkitSpeechRecognition" in window) &&
       !("SpeechRecognition" in window)
     ) {
-      alert("Speech Recognition API not supported in this browser.");
+      console.warn("Speech Recognition API not supported in this browser.");
       return;
     }
 
-    if (isListeningDebug) {
-      if (recognition) recognition.stop();
-      isListeningDebug = false;
-    } else {
-      const SpeechRecognition =
-        window.SpeechRecognition || (window as any).webkitSpeechRecognition;
-      recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+    recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
 
-      recognition.onresult = (event: any) => {
-        let interimTranscript = "";
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            transcript = event.results[i][0].transcript;
-          } else {
-            interimTranscript = event.results[i][0].transcript;
-          }
+    recognition.onresult = (event: any) => {
+      let interimTranscript = "";
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          transcript = event.results[i][0].transcript;
+        } else {
+          interimTranscript = event.results[i][0].transcript;
         }
-        if (interimTranscript) {
-          transcript = interimTranscript;
-        }
-      };
+      }
+      if (interimTranscript) {
+        transcript = interimTranscript;
+      }
+    };
 
-      recognition.onend = () => {
-        if (isListeningDebug) {
-          recognition.start(); // auto restart
-        }
-      };
+    recognition.onend = () => {
+      try {
+        recognition.start();
+      } catch (e) {}
+    };
 
+    try {
       recognition.start();
-      isListeningDebug = true;
-    }
+    } catch (e) {}
   }
 
   let cocoModel: null | cocoSsd.ObjectDetection = null;
@@ -225,6 +222,8 @@
       });
       // Start continuous scanning loop
       scanEnvironment();
+      // Start listening to users
+      startContinuousHearing();
     } catch (err) {
       console.error("Camera access denied or unavailable", err);
     }
@@ -378,9 +377,6 @@
           <button on:click={() => setState("STATE_EXCHANGING_IDENTITY")}
             >Exchange ID</button
           >
-          <button on:click={toggleSpeechDebug}
-            >{isListeningDebug ? "Stop Hearing" : "Debug Hearing"}</button
-          >
           <a href="/social" target="_blank" class="button-link">Dream Feed</a>
         </div>
       </div>
@@ -469,17 +465,21 @@
     background: rgba(0, 0, 0, 0.5);
   }
 
-  .debug-transcript {
+  .hearing-captions {
     position: absolute;
-    top: 5rem;
-    left: 2rem;
-    max-width: 300px;
-    font-size: 0.9rem;
-    color: #00ffcc;
-    padding: 0.5rem;
+    bottom: 6rem;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 80%;
+    font-size: 1.5rem;
+    color: #fff;
+    padding: 0.8rem 1.5rem;
+    background: rgba(0, 0, 0, 0.8);
+    border-radius: 12px;
     border: 1px solid #00ffcc;
-    background: rgba(0, 0, 0, 0.7);
-    border-radius: 8px;
+    text-shadow: 0 0 5px #00ffcc;
+    z-index: 50;
+    text-align: center;
   }
 
   .hidden-vision-source {
