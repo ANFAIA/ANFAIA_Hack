@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  // State Definitions (Antigravity Specs)
-  type BotState = 'STATE_IDLE' | 'STATE_LISTENING' | 'STATE_THINKING' | 'STATE_SPEAKING' | 'STATE_INSTRUCTING' | 'STATE_DREAMING' | 'STATE_EXCHANGING_IDENTITY';
+  // Routing
+  const isSocialPage = window.location.pathname === '/social';
+
+  type BotState = 'STATE_IDLE' | 'STATE_LISTENING' | 'STATE_THINKING' | 'STATE_SPEAKING' | 'STATE_INSTRUCTING' | 'STATE_EXCHANGING_IDENTITY';
   let currentState: BotState = 'STATE_IDLE';
 
   // Bidi-streaming placeholder HUD text
@@ -17,6 +19,21 @@
     currentState = state;
   }
 
+  // Social Network Data (Dreams)
+  let discoveries: any[] = [];
+
+  async function fetchDreams() {
+    try {
+      const resp = await fetch('http://localhost:8000/discoveries');
+      if (resp.ok) {
+        const payload = await resp.json();
+        discoveries = payload.data;
+      }
+    } catch (err) {
+      console.error("Failed to load dreams:", err);
+    }
+  }
+
   // Camera & Streaming Logic
   let videoElement: HTMLVideoElement;
   let leftEyeVideo: HTMLVideoElement;
@@ -25,6 +42,11 @@
   let activeStream: MediaStream | null = null;
 
   onMount(async () => {
+    if (isSocialPage) {
+      fetchDreams();
+      return;
+    }
+    
     try {
       activeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
       // Start continuous scanning loop
@@ -64,8 +86,8 @@
   }
 </script>
 
-<main class="omni-app" class:dreaming={currentState === 'STATE_DREAMING'}>
-  {#if currentState !== 'STATE_DREAMING'}
+<main class="omni-app" class:dreaming={isSocialPage}>
+  {#if !isSocialPage}
     <div class="camera-feed-bg">
       <video bind:this={videoElement} class="real-camera" autoplay playsinline muted></video>
       <div class="hud-overlay">
@@ -86,14 +108,10 @@
           {:else}
             <div class="cute-eyes">
               <div class="eye left-eye">
-                <div class="eye-reflection">
-                   <video bind:this={leftEyeVideo} class="reflection-cam" autoplay playsinline muted></video>
-                </div>
+                <video bind:this={leftEyeVideo} class="reflection-cam" autoplay playsinline muted></video>
               </div>
               <div class="eye right-eye">
-                <div class="eye-reflection">
-                   <video bind:this={rightEyeVideo} class="reflection-cam" autoplay playsinline muted></video>
-                </div>
+                <video bind:this={rightEyeVideo} class="reflection-cam" autoplay playsinline muted></video>
               </div>
             </div>
           {/if}
@@ -106,24 +124,41 @@
           <button on:click={() => setState('STATE_SPEAKING')}>Speak</button>
           <button on:click={() => setState('STATE_INSTRUCTING')}>Instruct</button>
           <button on:click={() => setState('STATE_EXCHANGING_IDENTITY')}>Exchange ID</button>
-          <button on:click={() => setState('STATE_DREAMING')}>Dream</button>
+          <a href="/social" target="_blank" class="button-link">Dream Feed</a>
         </div>
       </div>
     </div>
   {:else}
     <div class="dream-feed">
-      <h1>Dream Gallery</h1>
+      <h1>OmniBot Social Network</h1>
       <p>NanoBanana2 (Watercolor Painting Style) Generated Images feed goes here...</p>
-      <button on:click={() => setState('STATE_IDLE')}>Wake Up</button>
       
       <div class="gallery">
-        <div class="card">
-          <div class="watercolor-frame">
-            <img src="https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?ixlib=rb-4.0.3&auto=format&fit=crop&w=400&q=80" alt="Watercolor Dream" class="watercolor-effect" />
+        {#if discoveries.length === 0}
+          <p>No dreams generated yet.</p>
+        {/if}
+        {#each discoveries as dream}
+          <div class="card">
+            <div class="watercolor-frame">
+              <!-- Using the placeholder until NanoBanana2 returns the real image string from DB -->
+              <img src="https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?ixlib=rb-4.0.3&auto=format&fit=crop&w=400&q=80" alt="Watercolor Dream" class="watercolor-effect" />
+            </div>
+            <p><strong>{dream.timestamp}</strong> - {dream.type}</p>
+            <p>{dream.description}</p>
+            {#if dream.lat && dream.lng}
+              <div class="map-frame">
+                <iframe 
+                  title="Memory Location Map"
+                  width="100%" 
+                  height="150" 
+                  style="border:0;" 
+                  loading="lazy" 
+                  src={`https://maps.google.com/maps?q=${dream.lat},${dream.lng}&z=14&output=embed`}>
+                </iframe>
+              </div>
+            {/if}
           </div>
-          <p>Met a cat. Stared at it for 3 minutes.</p>
-        </div>
-        <!-- More cards here... -->
+        {/each}
       </div>
     </div>
   {/if}
@@ -219,24 +254,17 @@
     overflow: hidden;
     box-shadow: 0 0 15px #00ffcc;
     transition: all 0.3s ease;
-  }
-
-  .eye-reflection {
-    position: absolute;
-    top: 15px;
-    right: 15px;
-    width: 25px;
-    height: 25px;
-    border-radius: 50%;
-    overflow: hidden;
-    background: #fff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
   }
 
   .reflection-cam {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    opacity: 0.9;
+    opacity: 0.5; /* Eye reflection opacity */
+    mix-blend-mode: screen;
   }
 
   /* State Animations */
@@ -304,7 +332,20 @@
     font-family: inherit;
   }
   
-  button:hover { background: #00ffcc; color: #000; }
+  button:hover, .button-link:hover { background: #00ffcc; color: #000; }
+
+  .button-link {
+    display: inline-block;
+    background: transparent;
+    border: 1px solid #00ffcc;
+    color: #00ffcc;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    font-family: inherit;
+    text-decoration: none;
+    font-size: 13.3333px; /* Match button font size */
+    box-sizing: border-box;
+  }
 
   /* Dream Feed */
   .dream-feed {
@@ -346,4 +387,11 @@
   }
   
   .card p { margin-top: 1rem; color: #aaa; }
+
+  .map-frame {
+    margin-top: 1rem;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid #333;
+  }
 </style>
